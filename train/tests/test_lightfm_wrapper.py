@@ -49,9 +49,9 @@ def format_test_parameters(funcs):
                                                  create_df_3users_3items_no_duplicates, 
                                                  create_df_3users_3items_yes_duplicates])
                         )
-def test_make_interactions(df, interactions_type):
+def test_preprocess(df, interactions_type):
     lfm = lightfm_wrapper.LightFM(rows_col='users', columns_col='items', interactions_type=interactions_type)
-    lfm._make_interactions_matrix(df.copy())
+    lfm.preprocess(df.copy())
     interactions_matrix = lfm.interactions_matrix.todense()
     if interactions_type == 'ones':
         df.drop_duplicates(inplace=True)
