@@ -1,4 +1,4 @@
-from .. import lightfm_wrapper
+from pyrecs.train import lightfm_wrapper
 import pytest
 import pandas as pd
 import numpy as np

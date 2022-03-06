@@ -1,7 +1,8 @@
 import lightfm
 from scipy.sparse import coo_matrix
 import numpy as np
-from ..evaluate import mapk
+from tqdm import tqdm
+from pyrecs.evaluate import mapk
 
 class LightFM:
     def __init__(self, rows_col, columns_col, interactions_type):
@@ -40,16 +41,18 @@ class LightFM:
         # TODO: 
         pass
     
-    def train(self, lightfm_model, train_kwargs):
-        ones_interactions_matrix = deepcopy(interactions_matrix)
-        ones_interactions_matrix = ones_interactions_matrix[ones_interactions_matrix >= 1] = 1
-        for i in range(train_kwargs['num_epochs']):
-            lightfm.fit_partial(interactions=ones_interactions_matrix, 
-                                user_features=train_kwargs['user_features'], 
-                                item_features=train_kwargs['item_features'], 
-                                sample_weight=self.interactions_matrix, 
-                                epochs=1, num_threads=train_kwargs['num_threads'], 
-                                verbose=False)
+    def train(self, model_kwargs, train_kwargs):
+        self.model = lightfm.LightFM(**model_kwargs)
+        ones_interactions_matrix = self.interactions_matrix.copy()
+        ones_interactions_matrix.data[:] = 1
+        print('Training...')
+        for i in tqdm(range(train_kwargs['num_epochs'])):
+            self.model.fit_partial(interactions=ones_interactions_matrix, 
+                                   user_features=train_kwargs['user_features'], 
+                                   item_features=train_kwargs['item_features'], 
+                                   sample_weight=self.interactions_matrix, 
+                                   epochs=1, num_threads=train_kwargs['num_threads'], 
+                                   verbose=False)
     
     def run(self, flat_interactions_df, lightfm_model, train_kwargs):
         self.preprocess(flat_interactions_df)
