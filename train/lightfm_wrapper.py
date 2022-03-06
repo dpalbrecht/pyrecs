@@ -36,6 +36,8 @@ class LightFM:
     
     def preprocess(self, flat_interactions_df):
         self._make_interactions_matrix(flat_interactions_df)
+        self.rows2ind_r = {v:k for k,v in self.rows2ind.items()}
+        self.columns2ind_r = {v:k for k,v in self.columns2ind.items()}
         
     def evaluate(self):
         # TODO: 
