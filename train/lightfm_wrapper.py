@@ -5,6 +5,7 @@ import pandas as pd
 import itertools
 from tqdm import tqdm
 from pyrecs.evaluate.mapk import mapk
+import matplotlib.pyplot as plt
 
 
 def chunk_list(lst, n):
@@ -65,40 +66,47 @@ class LightFM:
         top_score_inds = np.argpartition(-scores, n_recs-1, axis=1)[:,:n_recs]
         sorted_top_score_inds = np.argsort(np.take_along_axis(-scores, top_score_inds, axis=1))
         top_item_inds = np.take_along_axis(top_score_inds, sorted_top_score_inds, axis=1)
+        
+        # Convert indices to real values
+        # TODO: Re-create rows2ind_r
+        # row_inds = [self.rows2ind_r r for r in row_inds]
 
         return list(zip(row_inds, top_item_inds.tolist()))
 
-    def evaluate(self, test_dict):
+    def evaluate(self, test_df):
         # Format truth
-        truth = pd.DataFrame.from_dict(test_dict, orient='index')
-        truth.index = truth.index.map(self.rows2ind)
-        truth = truth.applymap(lambda x: self.columns2ind[x])
-        truth = truth.T.to_dict(orient='list')
+        truth = dict(test_df.groupby(self.rows_col)[self.columns_col].apply(lambda x: list(x.unique())))
+        truth = {self.rows2ind[k]:[self.columns2ind.get(vv) for vv in v] for k,v in truth.items() 
+                 if self.rows2ind.get(k) is not None}
+        # TODO: Don't convert to indices here, convert predictions to real values
 
         # Predict for all train users in chunks
         num_users = len(self.rows2ind)
         row_ind_chunks = chunk_list(range(num_users), 10000)
-        tqdm_desc = '[EVALUATE] Making predictions for all training users'
+        tqdm_desc = '[EVALUATE] Making predictions for all training set users'
         predictions = list(itertools.chain(*[self.predict(ric) \
                                              for ric in tqdm(row_ind_chunks, desc=tqdm_desc, 
                                                              leave=True, position=0)]))
         predictions = {p[0]:p[1] for p in predictions}
 
         # Format truth and predictions for all users in truth
-        # TODO: Handle new users in test that were not in train
+        # TODO: For new users, predict the most popular items
+        # TODO: Add functionality to filter out items that existing users have already interacted with
         formatted_truth, formatted_predictions = [], []
         for user, truths in truth.items():
-            formatted_predictions.append(predictions[user])
+            formatted_predictions.append(predictions.get(user, []))
             formatted_truth.append(truths)
 
         return mapk(formatted_truth, formatted_predictions, k=self.n_recs)
 
-    def train(self, model_kwargs, train_kwargs, test_dict, n_recs):
+    def train(self, model_kwargs, train_kwargs, test_df, n_recs):
         self.n_recs = n_recs
         self.model = lightfm.LightFM(**model_kwargs)
         ones_interactions_matrix = self.interactions_matrix.copy()
         ones_interactions_matrix.data[:] = 1
-        self.evaluations = []
+        self.test_set_evaluations = []
+        # TODO: Optional train/test set evaluations
+        # TODO: Evalulation on some epochs only
         for i in tqdm(range(train_kwargs['num_epochs']), desc='Training', leave=True, position=0):
             self.model.fit_partial(interactions=ones_interactions_matrix, 
                                    user_features=train_kwargs['user_features'], 
@@ -106,9 +114,12 @@ class LightFM:
                                    sample_weight=self.interactions_matrix, 
                                    epochs=1, num_threads=train_kwargs['num_threads'], 
                                    verbose=False)
-            self.evaluations.append(self.evaluate(test_dict))
-        print(self.evaluations)
+            self.test_set_evaluations.append(self.evaluate(test_df))
+        plt.plot(range(1, train_kwargs['num_epochs']+1), self.test_set_evaluations)
+        plt.title('Test Set Performance')
+        plt.xlabel('Epoch')
+        plt.ylabel(f'MAP@{self.n_recs}')
     
-    def run(self, flat_interactions_df, lightfm_model, train_kwargs):
+    def run(self, flat_interactions_df, lightfm_model, train_kwargs, test_df):
         self.preprocess(flat_interactions_df)
-        self.train(lightfm_model, train_kwargs, test_dict)
+        self.train(lightfm_model, train_kwargs, test_df)
