@@ -4,8 +4,9 @@ import numpy as np
 import pandas as pd
 import itertools
 from tqdm import tqdm
-from pyrecs.evaluate.mapk import mapk
 import matplotlib.pyplot as plt
+from pyrecs.evaluate.mapk import mapk
+from pyrecs.predict import tfrs_streaming
 
 
 def chunk_list(lst, n):
@@ -43,51 +44,26 @@ class LightFM:
             raise ValueError(f"interactions_type ('{self.interactions_type}') not implemented.")
         self.interactions_matrix = coo_matrix((interactions, (rows, cols)), 
                                               shape=(len(self.rows2ind), len(self.columns2ind)))
-        
-    # TODO: Implement this with TFRS Streaming, in a predict module
-    def predict(self, row_inds):
-        # Load latent representations
-        item_biases, item_factors = self.model.get_item_representations()
-        user_biases, user_factors = self.model.get_user_representations()
-        user_biases = user_biases[row_inds]
-        user_factors = user_factors[row_inds]
 
-        # Combine item_factors with biases for dot product
-        item_factors = np.concatenate((item_factors, item_biases.reshape(-1, 1)), axis=1)
-
-        # Add ones to user_factors for item bias
-        user_factors = np.concatenate((user_factors, np.ones((user_biases.shape[0], 1))), axis=1)
-
-        # Calculate scores
-        scores = user_factors.dot(item_factors.T)
-
-        # Sort and rank items
-        n_recs = min(self.n_recs, len(item_biases))
-        top_score_inds = np.argpartition(-scores, n_recs-1, axis=1)[:,:n_recs]
-        sorted_top_score_inds = np.argsort(np.take_along_axis(-scores, top_score_inds, axis=1))
-        top_item_inds = np.take_along_axis(top_score_inds, sorted_top_score_inds, axis=1)
-        
-        # Convert indices to real values
-        # TODO: Re-create rows2ind_r
-        # row_inds = [self.rows2ind_r r for r in row_inds]
-
-        return list(zip(row_inds, top_item_inds.tolist()))
-
+    # TODO: add user/item feature functionality, and evaluation
     def evaluate(self, test_df):
         # Format truth
         truth = dict(test_df.groupby(self.rows_col)[self.columns_col].apply(lambda x: list(x.unique())))
-        truth = {self.rows2ind[k]:[self.columns2ind.get(vv) for vv in v] for k,v in truth.items() 
-                 if self.rows2ind.get(k) is not None}
-        # TODO: Don't convert to indices here, convert predictions to real values
-
-        # Predict for all train users in chunks
-        num_users = len(self.rows2ind)
-        row_ind_chunks = chunk_list(range(num_users), 10000)
-        tqdm_desc = '[EVALUATE] Making predictions for all training set users'
-        predictions = list(itertools.chain(*[self.predict(ric) \
-                                             for ric in tqdm(row_ind_chunks, desc=tqdm_desc, 
-                                                             leave=True, position=0)]))
-        predictions = {p[0]:p[1] for p in predictions}
+        
+        # Predict for all train users
+        item_biases, item_factors = self.model.get_item_representations()
+        user_biases, user_factors = self.model.get_user_representations()
+        item_factors = np.concatenate((item_factors, item_biases.reshape(-1, 1)), axis=1)
+        user_factors = np.concatenate((user_factors, np.ones((user_biases.shape[0], 1))), axis=1)
+        user_identifiers = [r[0] for r in sorted(self.rows2ind.items(), key=lambda x: x[1])]
+        item_identifiers = [c[0] for c in sorted(self.columns2ind.items(), key=lambda x: x[1])]
+        predictions = tfrs_streaming.predict(user_identifiers=user_identifiers, 
+                                             user_embeddings=user_factors,
+                                             item_identifiers=item_identifiers, 
+                                             item_embeddings=item_factors,
+                                             embedding_dtype='float32', 
+                                             n_recs=self.n_recs,
+                                             prediction_batch_size=self.tfrs_prediction_batch_size)
 
         # Format truth and predictions for all users in truth
         # TODO: For new users, predict the most popular items
@@ -99,8 +75,9 @@ class LightFM:
 
         return mapk(formatted_truth, formatted_predictions, k=self.n_recs)
 
-    def train(self, model_kwargs, train_kwargs, test_df, n_recs):
+    def train(self, model_kwargs, train_kwargs, test_df, n_recs, tfrs_prediction_batch_size):
         self.n_recs = n_recs
+        self.tfrs_prediction_batch_size = tfrs_prediction_batch_size
         self.model = lightfm.LightFM(**model_kwargs)
         ones_interactions_matrix = self.interactions_matrix.copy()
         ones_interactions_matrix.data[:] = 1
@@ -116,6 +93,7 @@ class LightFM:
                                    verbose=False)
             self.test_set_evaluations.append(self.evaluate(test_df))
         plt.plot(range(1, train_kwargs['num_epochs']+1), self.test_set_evaluations)
+        plt.xticks(range(1, train_kwargs['num_epochs']+1))
         plt.title('Test Set Performance')
         plt.xlabel('Epoch')
         plt.ylabel(f'MAP@{self.n_recs}')
