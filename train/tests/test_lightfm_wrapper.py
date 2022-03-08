@@ -50,25 +50,28 @@ def format_test_parameters(funcs):
                                                  create_df_3users_3items_yes_duplicates])
                         )
 def test_preprocess(df, interactions_type):
-    lfm = lightfm_wrapper.LightFM(rows_col='users', columns_col='items', interactions_type=interactions_type)
-    lfm.preprocess(df.copy())
+    lfm = lightfm_wrapper.LightFM(users_col='users', items_col='items', interactions_type=interactions_type,
+                                  model_kwargs={}, train_kwargs={}, 
+                                  n_recs=10, tfrs_prediction_batch_size=32)
+    lfm.preprocess(flat_interactions_df=df.copy(), 
+                   test_df=pd.DataFrame({'users':[1],'items':[1]}),)
     interactions_matrix = lfm.interactions_matrix.todense()
     if interactions_type == 'ones':
         df.drop_duplicates(inplace=True)
         
-    # Check that rows have the right number of interactions
-    row_counts = df.groupby('users').size().reset_index().rename(columns={0:'count'})
-    row_counts['user_inds'] = row_counts['users'].map(lfm.rows2ind)
-    rowind2count = dict(zip(row_counts['user_inds'], row_counts['count']))
-    for row, count in rowind2count.items():
-        assert interactions_matrix[row].sum() == count
+    # Check that users have the right number of interactions
+    user_counts = df.groupby('users').size().reset_index().rename(columns={0:'count'})
+    user_counts['user_inds'] = user_counts['users'].map(lfm.user2ind)
+    userind2count = dict(zip(user_counts['user_inds'], user_counts['count']))
+    for user, count in userind2count.items():
+        assert interactions_matrix[user].sum() == count
         
-    # Check that columns have the right number of interactions
-    column_counts = df.groupby('items').size().reset_index().rename(columns={0:'count'})
-    column_counts['item_inds'] = column_counts['items'].map(lfm.columns2ind)
-    columnind2count = dict(zip(column_counts['item_inds'], column_counts['count']))
-    for column, count in columnind2count.items():
-        assert interactions_matrix[:,column].sum() == count
+    # Check that items have the right number of interactions
+    item_counts = df.groupby('items').size().reset_index().rename(columns={0:'count'})
+    item_counts['item_inds'] = item_counts['items'].map(lfm.item2ind)
+    itemind2count = dict(zip(item_counts['item_inds'], item_counts['count']))
+    for item, count in itemind2count.items():
+        assert interactions_matrix[:,item].sum() == count
         
     # Check that there are the right number of dimensions
-    assert interactions_matrix.shape == (len(rowind2count), len(columnind2count))
+    assert interactions_matrix.shape == (len(userind2count), len(itemind2count))
