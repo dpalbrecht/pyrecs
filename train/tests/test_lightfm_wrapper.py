@@ -53,7 +53,7 @@ def test_preprocess(df, interactions_type):
     lfm = lightfm_wrapper.LightFM(users_col='users', items_col='items', interactions_type=interactions_type,
                                   model_kwargs={}, train_kwargs={}, 
                                   n_recs=10, tfrs_prediction_batch_size=32)
-    lfm.preprocess(flat_interactions_df=df.copy(), 
+    lfm.preprocess(train_df=df.copy(), 
                    test_df=pd.DataFrame({'users':[1],'items':[1]}),)
     interactions_matrix = lfm.interactions_matrix.todense()
     if interactions_type == 'ones':
