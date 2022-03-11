@@ -56,7 +56,7 @@ def train_features_lookup(features_dict, id2ind, feature_type):
     
     # Create ordered csr_matrix of features
     train_features_matrix = []
-    for data in sorted(list(id2ind.items()), key=lambda x: x[0], reverse=True):
+    for data in sorted(list(id2ind.items()), key=lambda x: x[1], reverse=True):
         id_, ind_ = data
         train_features_matrix.append(id2featurevector[id_])
     train_features_matrix = vstack(train_features_matrix)
@@ -80,7 +80,7 @@ def encode_new_features(features_dict, id2ind, str_features, list_features, feat
     
     # Create ordered csr_matrix of features
     features_matrix = []
-    for data in sorted(list(id2ind.items()), key=lambda x: x[0], reverse=True):
+    for data in sorted(list(id2ind.items()), key=lambda x: x[1], reverse=True):
         id_, ind_ = data
         features_matrix.append(id2featurevector[id_])
     features_matrix = vstack(features_matrix)
@@ -103,19 +103,49 @@ class LightFM:
     def preprocess(self, train_df, test_df, 
                    train_user_features_dict, train_item_features_dict,
                    test_user_features_dict, test_item_features_dict):
+        
+        # Quality checks
+        try:
+            assert len(set(train_user_features_dict.keys()) & set(test_user_features_dict.keys())) == 0
+            assert len(set(train_item_features_dict.keys()) & set(test_item_features_dict.keys())) == 0
+        except:
+            raise AssertionError('Train and Test feature dictionaries are not mutually exclusive.')
+        if len(train_user_features_dict) > 0:
+            try:
+                assert set(train_df[self.users_col]) == set(train_user_features_dict.keys())
+            except:
+                raise AssertionError('All Train Users do not have features.')
+            try:
+                all_users_interactions = train_df[self.users_col].unique().tolist()+test_df[self.users_col].unique().tolist()
+                all_users_features = list(train_user_features_dict.keys())+list(test_user_features_dict.keys())
+                assert set(all_users_interactions) == set(all_users_features)
+            except:
+                raise AssertionError('All Users either do not have interactions or associated features.')
+        if len(train_item_features_dict) > 0:
+            try:
+                assert set(train_df[self.items_col]) == set(train_item_features_dict.keys())
+            except:
+                raise AssertionError('All Train Items do not have features.')
+            try:
+                all_items_interactions = train_df[self.items_col].unique().tolist()+test_df[self.items_col].unique().tolist()
+                all_items_features = list(train_item_features_dict.keys())+list(test_item_features_dict.keys())
+                assert set(all_items_interactions) == set(all_items_features)
+            except:
+                raise AssertionError('All Items either do not have interactions or associated features.')
+        
         # Format train and test dfs
         self.train_dict = dict(train_df.groupby(self.users_col)[self.items_col].apply(lambda x: list(x.unique())))
         self.test_dict = dict(test_df.groupby(self.users_col)[self.items_col].apply(lambda x: list(x.unique())))
         
         # Create training interactions matrix
-        self.user2ind = dict(zip(train_df[self.users_col].unique(),
-                                 range(train_df[self.users_col].nunique())))
-        self.item2ind = dict(zip(train_df[self.items_col].unique(),
-                                    range(train_df[self.items_col].nunique())))
+        self.train_user2ind = dict(zip(train_df[self.users_col].unique(),
+                                       range(train_df[self.users_col].nunique())))
+        self.train_item2ind = dict(zip(train_df[self.items_col].unique(),
+                                       range(train_df[self.items_col].nunique())))
         if self.interactions_type == 'ones':
             train_df.drop_duplicates(subset=[self.users_col, self.items_col], inplace=True)
-            users = train_df[self.users_col].map(self.user2ind).values
-            items = train_df[self.items_col].map(self.item2ind).values
+            users = train_df[self.users_col].map(self.train_user2ind).values
+            items = train_df[self.items_col].map(self.train_item2ind).values
             interactions = np.ones(len(train_df))
         elif self.interactions_type == 'counts':
             counts_dict = dict(train_df.groupby([self.users_col, self.items_col]).size())
@@ -124,64 +154,77 @@ class LightFM:
             users, items, interactions = [], [], []
             for unique_pair in unique_user_item_pairs:
                 user, item = unique_pair
-                users.append(self.user2ind[user])
-                items.append(self.item2ind[item])
+                users.append(self.train_user2ind[user])
+                items.append(self.train_item2ind[item])
                 interactions.append(counts_dict[(user, item)])
         else:
             raise ValueError(f"interactions_type ('{self.interactions_type}') not implemented.")
         self.interactions_matrix = coo_matrix((interactions, (users, items)), 
-                                              shape=(len(self.user2ind), len(self.item2ind)))
+                                              shape=(len(self.train_user2ind), len(self.train_item2ind)))
         
         # Process train set user/item features
         self.user_train_features_matrix, self.item_train_features_matrix = None, None
         if len(train_user_features_dict) > 0:
             feature_lookups = train_features_lookup(train_user_features_dict, 
-                                                    id2ind=self.user2ind, feature_type='user')
+                                                    id2ind=self.train_user2ind, feature_type='user')
             self.__dict__.update(feature_lookups)
         if len(train_item_features_dict) > 0:
             feature_lookups = train_features_lookup(train_item_features_dict, 
-                                                    id2ind=self.item2ind, feature_type='item')
+                                                    id2ind=self.train_item2ind, feature_type='item')
             self.__dict__.update(feature_lookups)
         feature_lookups = None
-        
-        
-        # TODO:
-        # Create train_user_id2ind, test_user_id2ind and pass them to encode_new_features
-        # Clean up feature encoding functions above ^
-        
+                
         # Process test set user/item features
         self.user_test_id2featurevector, self.item_test_id2featurevector = None, None
+        self.test_user2ind, self.test_item2ind = {}, {}
         if len(test_user_features_dict) > 0:
-            self.user_test_id2featurevector = encode_new_features(test_user_features_dict, 
-                                                                  id2ind=,
-                                                                  self.user_train_str_features, 
-                                                                  self.user_train_list_features, 
-                                                                  self.user_train_feature2ind)
+            self.test_user2ind = dict(zip(test_user_features_dict.keys(),
+                                      range(len(self.train_user2ind), 
+                                            len(test_user_features_dict.keys())+len(self.train_user2ind))))
+            self.user_test_features_matrix = encode_new_features(test_user_features_dict, 
+                                                                 self.test_user2ind,
+                                                                 self.user_train_str_features, 
+                                                                 self.user_train_list_features, 
+                                                                 self.user_train_feature2ind)
         if len(test_item_features_dict) > 0:
-            self.item_test_id2featurevector = encode_new_features(test_item_features_dict, 
-                                                                  id2ind=,
-                                                                  self.item_train_str_features, 
-                                                                  self.item_train_list_features, 
-                                                                  self.item_train_feature2ind)
+            self.test_item2ind = dict(zip(test_item_features_dict.keys(),
+                                      range(len(self.test_item2ind), 
+                                            len(test_item_features_dict.keys())+len(self.train_item2ind))))
+            self.item_test_features_matrix = encode_new_features(test_item_features_dict, 
+                                                                 self.test_item2ind,
+                                                                 self.item_train_str_features, 
+                                                                 self.item_train_list_features, 
+                                                                 self.item_train_feature2ind)
         
         # Make sure n_recs isn't > number of items available
-        self.n_recs = min(self.n_recs, len(self.item2ind))
+        self.n_recs = min(self.n_recs, len(self.train_item2ind))
 
     def evaluate(self):       
         # Format user/item representations and identifiers in train
-        user_biases, user_factors = self.model.get_user_representations(features=self.user_train_features_matrix)
-        user_factors = np.concatenate((user_factors, np.ones((user_biases.shape[0], 1))), axis=1)
-        user_identifiers = [r[0] for r in sorted(self.user2ind.items(), key=lambda x: x[1])]
-        item_biases, item_factors = self.model.get_item_representations(features=self.item_train_features_matrix)
-        item_factors = np.concatenate((item_factors, item_biases.reshape(-1, 1)), axis=1)
-        item_identifiers = [c[0] for c in sorted(self.item2ind.items(), key=lambda x: x[1])]
+        train_user_biases, train_user_factors = self.model.get_user_representations(features=self.user_train_features_matrix)
+        train_user_factors = np.concatenate((train_user_factors, np.ones((train_user_biases.shape[0], 1))), axis=1)
+        train_user_identifiers = [r[0] for r in sorted(self.train_user2ind.items(), key=lambda x: x[1])]
+        train_item_biases, train_item_factors = self.model.get_item_representations(features=self.item_train_features_matrix)
+        train_item_factors = np.concatenate((train_item_factors, train_item_biases.reshape(-1, 1)), axis=1)
+        train_item_identifiers = [c[0] for c in sorted(self.train_item2ind.items(), key=lambda x: x[1])]
         
         # Add user/item representations and identifiers from test
-        # TODO: Add new users and features to evaluation for cold-start
+        test_user_biases, test_user_factors = self.model.get_user_representations(features=self.user_test_features_matrix)
+        test_user_factors = np.concatenate((test_user_factors, np.ones((test_user_biases.shape[0], 1))), axis=1)
+        test_user_identifiers = [r[0] for r in sorted(self.test_user2ind.items(), key=lambda x: x[1])]
+        test_item_biases, test_item_factors = self.model.get_item_representations(features=self.item_test_features_matrix)
+        test_item_factors = np.concatenate((test_item_factors, np.ones((test_item_biases.shape[0], 1))), axis=1)
+        test_item_identifiers = [c[0] for c in sorted(self.test_item2ind.items(), key=lambda x: x[1])]
         
+        # Combine train+test user/item representations
+        user_factors = np.vstack([train_user_factors, test_user_factors])
+        item_factors = np.vstack([train_item_factors, test_item_factors])
+        user_identifiers = train_user_identifiers+test_user_identifiers
+        item_identifiers = train_item_identifiers+test_item_identifiers
         
         # Predict
         # TODO: Add functionality to filter out items that users have already interacted with in train
+        # TODO: Predict most popular items for new users, where no cold-start
         predictions = tfrs_streaming.predict(user_identifiers=user_identifiers, 
                                              user_embeddings=user_factors,
                                              item_identifiers=item_identifiers, 
@@ -196,19 +239,17 @@ class LightFM:
             train_set_predictions.append(predictions[user])
             train_set_truth.append(truth)
         
-        # TODO: Uncomment the below after testing new users and items
-        
-        # # Format test set predictions
-        # test_set_truth, test_set_predictions = [], []
-        # for user, truth in self.test_dict.items():
-        #     test_set_predictions.append(predictions[user])
-        #     test_set_truth.append(truth)
+        # Format test set predictions
+        test_set_truth, test_set_predictions = [], []
+        for user, truth in self.test_dict.items():
+            test_set_predictions.append(predictions[user])
+            test_set_truth.append(truth)
             
         # Calculate MAP@K
         train_mapk = mapk(train_set_truth, train_set_predictions, k=self.n_recs)
-        # test_mapk = mapk(test_set_truth, test_set_predictions, k=self.n_recs)
+        test_mapk = mapk(test_set_truth, test_set_predictions, k=self.n_recs)
 
-        return train_mapk, 0#, test_mapk
+        return train_mapk, test_mapk
 
     def train(self):
         self.model = lightfm.LightFM(**self.model_kwargs)
