@@ -49,29 +49,48 @@ def format_test_parameters(funcs):
                                                  create_df_3users_3items_no_duplicates, 
                                                  create_df_3users_3items_yes_duplicates])
                         )
-def test_preprocess(df, interactions_type):
+def test_create_train_interactions_matrix(df, interactions_type):
     lfm = lightfm_wrapper.LightFM(users_col='users', items_col='items', interactions_type=interactions_type,
                                   model_kwargs={}, train_kwargs={}, 
                                   n_recs=10, tfrs_prediction_batch_size=32)
-    lfm.preprocess(train_df=df.copy(), 
-                   test_df=pd.DataFrame({'users':[1],'items':[1]}),)
+    lfm._create_train_interactions_matrix(train_df=df.copy(), 
+                                          test_df=pd.DataFrame({'users':[1],'items':[1]}),)
     interactions_matrix = lfm.interactions_matrix.todense()
     if interactions_type == 'ones':
         df.drop_duplicates(inplace=True)
         
     # Check that users have the right number of interactions
     user_counts = df.groupby('users').size().reset_index().rename(columns={0:'count'})
-    user_counts['user_inds'] = user_counts['users'].map(lfm.user2ind)
+    user_counts['user_inds'] = user_counts['users'].map(lfm.train_user2ind)
     userind2count = dict(zip(user_counts['user_inds'], user_counts['count']))
     for user, count in userind2count.items():
         assert interactions_matrix[user].sum() == count
         
     # Check that items have the right number of interactions
     item_counts = df.groupby('items').size().reset_index().rename(columns={0:'count'})
-    item_counts['item_inds'] = item_counts['items'].map(lfm.item2ind)
+    item_counts['item_inds'] = item_counts['items'].map(lfm.train_item2ind)
     itemind2count = dict(zip(item_counts['item_inds'], item_counts['count']))
     for item, count in itemind2count.items():
         assert interactions_matrix[:,item].sum() == count
         
     # Check that there are the right number of dimensions
     assert interactions_matrix.shape == (len(userind2count), len(itemind2count))
+    
+
+def test_quality_checks():
+    pass
+
+def test_get_feature_representations():
+    pass
+
+def test_format_predictions():
+    pass
+
+def test_no_side_features():
+    pass
+
+def test_partial_side_features():
+    pass
+
+def test_full_side_features():
+    pass

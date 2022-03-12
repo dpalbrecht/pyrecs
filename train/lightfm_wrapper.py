@@ -10,7 +10,7 @@ from pyrecs.evaluate.mapk import mapk
 from pyrecs.predict import tfrs_streaming
 from IPython.display import clear_output
 
-
+# TODO: Move this to a preprocess module and test it separately there
 def ohe_features(features, lookup):
     vector = np.zeros(len(lookup))
     for feature in features:
@@ -33,6 +33,7 @@ def encode_features(features_df, feature2ind):
     id2featurevector = dict(zip(features_df['index'], feature_vectors))
     return id2featurevector
 
+# TODO: Handle numerical features as numericals, not strings
 def train_features_lookup(features_dict, id2ind, feature_type):
     # Determine feature types
     str_features, list_features = [], []
@@ -165,7 +166,7 @@ class LightFM:
     def _process_train_features(self, train_features_dict, feature_type):
         if len(train_features_dict) > 0:
             feature_lookups = train_features_lookup(train_features_dict, 
-                                                    id2ind=self.train_user2ind if (feature_type=='user') else self.train_item2ind, 
+                                                    id2ind=self.__dict__[f'train_{feature_type}2ind'], 
                                                     feature_type=feature_type)
             self.__dict__.update(feature_lookups)
             
