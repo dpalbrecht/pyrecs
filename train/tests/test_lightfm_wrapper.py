@@ -2,6 +2,7 @@ from pyrecs.train import lightfm_wrapper
 import pytest
 import pandas as pd
 import numpy as np
+import itertools
 
 
 def create_df_2users_3items_yes_duplicates(duplicates=True):
@@ -50,9 +51,7 @@ def format_test_parameters(funcs):
                                                  create_df_3users_3items_yes_duplicates])
                         )
 def test_create_train_interactions_matrix(df, interactions_type):
-    lfm = lightfm_wrapper.LightFM(users_col='users', items_col='items', interactions_type=interactions_type,
-                                  model_kwargs={}, train_kwargs={}, 
-                                  n_recs=10, tfrs_prediction_batch_size=32)
+    lfm = lightfm_wrapper.LightFM(interactions_type=interactions_type)
     lfm._create_train_interactions_matrix(train_df=df.copy(), 
                                           test_df=pd.DataFrame({'users':[1],'items':[1]}),)
     interactions_matrix = lfm.interactions_matrix.todense()
@@ -77,20 +76,189 @@ def test_create_train_interactions_matrix(df, interactions_type):
     assert interactions_matrix.shape == (len(userind2count), len(itemind2count))
     
 
-def test_quality_checks():
-    pass
+@pytest.mark.parametrize("inputs,expected_error",
+                         [
+                             ({'train_df': pd.DataFrame(),
+                               'test_df': pd.DataFrame(),
+                               'train_user_features_dict': {'user1':1},
+                               'test_user_features_dict': {'user1':1},
+                               'train_item_features_dict': {'item1':1},
+                               'test_item_features_dict': {'item2':1}},
+                             'Train and Test feature dictionaries are not mutually exclusive.'),
+                             ({'train_df': pd.DataFrame({'users':['user1','user2'],'items':['item1','item1']}),
+                               'test_df': pd.DataFrame(),
+                               'train_user_features_dict': {'user1':1},
+                               'test_user_features_dict': {'user2':1},
+                               'train_item_features_dict': {'item1':1},
+                               'test_item_features_dict': {'item2':1}},
+                             'All Train Users do not have features.'),
+                             ({'train_df': pd.DataFrame({'users':['user1','user2'],'items':['item1','item1']}),
+                               'test_df': pd.DataFrame({'users':['user1'],'items':['item1']}),
+                               'train_user_features_dict': {'user1':1,'user2':1},
+                               'test_user_features_dict': {'user3':1},
+                               'train_item_features_dict': {'item1':1},
+                               'test_item_features_dict': {'item2':1}},
+                             'All Users either do not have interactions or associated features.'),
+                             ({'train_df': pd.DataFrame({'users':['user1','user2'],'items':['item1','item2']}),
+                               'test_df': pd.DataFrame({'users':['user1'],'items':['item1']}),
+                               'train_user_features_dict': {'user1':1,'user2':1},
+                               'test_user_features_dict': {},
+                               'train_item_features_dict': {'item1':1},
+                               'test_item_features_dict': {'item2':1}},
+                             'All Train Items do not have features.'),
+                             ({'train_df': pd.DataFrame({'users':['user1','user2'],'items':['item1','item1']}),
+                               'test_df': pd.DataFrame({'users':['user1'],'items':['item1']}),
+                               'train_user_features_dict': {'user1':1,'user2':1},
+                               'test_user_features_dict': {},
+                               'train_item_features_dict': {'item1':1},
+                               'test_item_features_dict': {'item2':1}},
+                             'All Items either do not have interactions or associated features.')
+                         ]) 
+def test_quality_checks(inputs,expected_error):
+    lfm = lightfm_wrapper.LightFM()
+    with pytest.raises(Exception) as error:
+        lfm._quality_checks(inputs['train_df'], inputs['test_df'],
+                            inputs['train_user_features_dict'], inputs['train_item_features_dict'],
+                            inputs['test_user_features_dict'], inputs['test_item_features_dict'])
+    assert expected_error == str(error.value)
 
-def test_get_feature_representations():
-    pass
-
-def test_format_predictions():
-    pass
 
 def test_no_side_features():
-    pass
+    model_kwargs = {
+    'no_components':10,
+    'learning_rate':0.05,
+    'loss':'warp',
+    'random_state':42
+    }
+    train_kwargs = {
+        'num_epochs':2,
+        'num_threads':1,
+        'eval_epochs':'all',
+        'plot':False
+    }
+    lfm = lightfm_wrapper.LightFM(model_kwargs=model_kwargs, 
+                                  train_kwargs=train_kwargs)
+    train_df = pd.DataFrame({'users':['user1','user2'],'items':['item1','item2']})
+    test_df = pd.DataFrame({'users':['user1','user3'],'items':['item1','item3']})
+    train_user_features_dict = {}
+    test_user_features_dict = {}
+    train_item_features_dict = {}
+    test_item_features_dict = {}
+    lfm.run(train_df, test_df, 
+            train_user_features_dict, train_item_features_dict,
+            test_user_features_dict, test_item_features_dict)
+    assert sorted(list(lfm.predictions_dict.keys())) == sorted(['user1','user2'])
+    assert sorted(set(itertools.chain(*list(lfm.predictions_dict.values())))) == sorted(['item1','item2'])
 
-def test_partial_side_features():
-    pass
 
-def test_full_side_features():
-    pass
+def test_no_user_side_features():
+    model_kwargs = {
+        'no_components':10,
+        'learning_rate':0.05,
+        'loss':'warp',
+        'random_state':42
+    }
+    train_kwargs = {
+        'num_epochs':2,
+        'num_threads':1,
+        'eval_epochs':'all',
+        'plot':False
+    }
+    lfm = lightfm_wrapper.LightFM(model_kwargs=model_kwargs, 
+                                  train_kwargs=train_kwargs)
+    train_df = pd.DataFrame({'users':['user1','user2'],'items':['item1','item2']})
+    test_df = pd.DataFrame({'users':['user1','user3'],'items':['item1','item3']})
+    train_user_features_dict = {}
+    test_user_features_dict = {}
+    train_item_features_dict = {'item1':{'type':'shirt'}, 'item2':{'type':'dress'}}
+    test_item_features_dict = {'item3':{'type':'pants'}}
+    lfm.run(train_df, test_df, 
+            train_user_features_dict, train_item_features_dict,
+            test_user_features_dict, test_item_features_dict)
+    assert sorted(list(lfm.predictions_dict.keys())) == sorted(['user1','user2'])
+    assert sorted(set(itertools.chain(*list(lfm.predictions_dict.values())))) == sorted(['item1','item2','item3'])
+    
+
+def test_no_item_side_features():
+    model_kwargs = {
+        'no_components':10,
+        'learning_rate':0.05,
+        'loss':'warp',
+        'random_state':42
+    }
+    train_kwargs = {
+        'num_epochs':2,
+        'num_threads':1,
+        'eval_epochs':'all',
+        'plot':False
+    }
+    lfm = lightfm_wrapper.LightFM(model_kwargs=model_kwargs, 
+                                  train_kwargs=train_kwargs)
+    train_df = pd.DataFrame({'users':['user1','user2'],'items':['item1','item2']})
+    test_df = pd.DataFrame({'users':['user1','user3'],'items':['item1','item3']})
+    train_user_features_dict = {'user1':{'gender':'m'}, 'user2':{'gender':'f'}}
+    test_user_features_dict = {'user3':{'gender':'m'}}
+    train_item_features_dict = {}
+    test_item_features_dict = {}
+    lfm.run(train_df, test_df, 
+            train_user_features_dict, train_item_features_dict,
+            test_user_features_dict, test_item_features_dict)
+    assert sorted(list(lfm.predictions_dict.keys())) == sorted(['user1','user2','user3'])
+    assert sorted(set(itertools.chain(*list(lfm.predictions_dict.values())))) == sorted(['item1','item2'])
+    
+    
+def test_full_side_features_small():
+    model_kwargs = {
+        'no_components':10,
+        'learning_rate':0.05,
+        'loss':'warp',
+        'random_state':42
+    }
+    train_kwargs = {
+        'num_epochs':2,
+        'num_threads':1,
+        'eval_epochs':'all',
+        'plot':False
+    }
+    lfm = lightfm_wrapper.LightFM(model_kwargs=model_kwargs, 
+                                  train_kwargs=train_kwargs)
+    train_df = pd.DataFrame({'users':['user1','user2'],'items':['item1','item2']})
+    test_df = pd.DataFrame({'users':['user1','user3'],'items':['item1','item3']})
+    train_user_features_dict = {'user1':{'gender':'m'}, 'user2':{'gender':'f'}}
+    test_user_features_dict = {'user3':{'gender':'m'}}
+    train_item_features_dict = {'item1':{'type':'shirt'}, 'item2':{'type':'dress'}}
+    test_item_features_dict = {'item3':{'type':'pants'}}
+    lfm.run(train_df, test_df, 
+            train_user_features_dict, train_item_features_dict,
+            test_user_features_dict, test_item_features_dict)
+    assert sorted(list(lfm.predictions_dict.keys())) == sorted(['user1','user2','user3'])
+    assert sorted(set(itertools.chain(*list(lfm.predictions_dict.values())))) == sorted(['item1','item2','item3'])
+
+
+def test_full_side_features_large():
+    model_kwargs = {
+        'no_components':10,
+        'learning_rate':0.05,
+        'loss':'warp',
+        'random_state':42
+    }
+    train_kwargs = {
+        'num_epochs':2,
+        'num_threads':1,
+        'eval_epochs':'all',
+        'plot':False
+    }
+    lfm = lightfm_wrapper.LightFM(model_kwargs=model_kwargs, 
+                                  train_kwargs=train_kwargs)
+    train_df = pd.DataFrame({'users':['user1','user2','user1'],'items':['item1','item2','item2']})
+    test_df = pd.DataFrame({'users':['user1','user3','user2'],'items':['item1','item3','item1']})
+    train_user_features_dict = {'user1':{'gender':'m','favorite_products':['shirt','pants'], 'embedding':np.array([1,1,1])}, 
+                                'user2':{'gender':'f', 'favorite_products':['shirt','pants', 'sweater'], 'embedding':np.array([2,2,2])}}
+    test_user_features_dict = {'user3':{'gender':'m', 'favorite_products':[], 'embedding':np.array([3,3,3])}}
+    train_item_features_dict = {'item1':{'type':'shirt', 'size':10}, 'item2':{'type':'dress', 'size':5}}
+    test_item_features_dict = {'item3':{'type':'pants', 'size':32}}
+    lfm.run(train_df, test_df, 
+            train_user_features_dict, train_item_features_dict,
+            test_user_features_dict, test_item_features_dict)
+    assert sorted(list(lfm.predictions_dict.keys())) == sorted(['user1','user2','user3'])
+    assert sorted(set(itertools.chain(*list(lfm.predictions_dict.values())))) == sorted(['item1','item2','item3'])

@@ -13,9 +13,10 @@ from pyrecs.preprocess import mixed_features2vec
 
 
 class LightFM:
-    def __init__(self, users_col, items_col, interactions_type, 
-                 model_kwargs, train_kwargs, 
-                 n_recs, tfrs_prediction_batch_size):
+    def __init__(self, 
+                 users_col='users', items_col='items', interactions_type='ones', 
+                 model_kwargs={}, train_kwargs={}, 
+                 n_recs=10, tfrs_prediction_batch_size=32):
         self.users_col = users_col
         self.items_col = items_col
         self.interactions_type = interactions_type
@@ -24,6 +25,7 @@ class LightFM:
         self.n_recs = n_recs
         self.tfrs_prediction_batch_size = tfrs_prediction_batch_size
         self.train_user_features_matrix, self.train_item_features_matrix = None, None
+        self.test_user_features_matrix, self.test_item_features_matrix = None, None
         self.user_test_id2featurevector, self.item_test_id2featurevector = None, None
         self.test_user2ind, self.test_item2ind = {}, {}
         
@@ -128,16 +130,17 @@ class LightFM:
         self._process_test_features(test_item_features_dict, feature_type='item')
         
         # Make sure n_recs isn't > number of items available
-        self.n_recs = min(self.n_recs, len(self.train_item2ind))
-        
-    def _get_feature_representations(self, dataset):
-        user_biases, user_factors = self.model.get_user_representations(features=self.__dict__[f'{dataset}_user_features_matrix'])
-        user_factors = np.concatenate((user_factors, np.ones((user_biases.shape[0], 1))), axis=1)
-        user_identifiers = [u[0] for u in sorted(self.__dict__[f'{dataset}_user2ind'].items(), key=lambda x: x[1])]
-        item_biases, item_factors = self.model.get_item_representations(features=self.__dict__[f'{dataset}_item_features_matrix'])
-        item_factors = np.concatenate((item_factors, item_biases.reshape(-1, 1)), axis=1)
-        item_identifiers = [i[0] for i in sorted(self.__dict__[f'{dataset}_item2ind'].items(), key=lambda x: x[1])]
-        return user_factors, user_identifiers, item_factors, item_identifiers
+        unique_item_ids = set(train_df[self.items_col].unique().tolist() + test_df[self.items_col].unique().tolist())
+        self.n_recs = min(self.n_recs, len(unique_item_ids))
+    
+    def _get_feature_representations(self, dataset, feature_type):
+        if feature_type == 'user':
+            biases, factors = self.model.get_user_representations(features=self.__dict__[f'{dataset}_{feature_type}_features_matrix'])
+        else:
+            biases, factors = self.model.get_item_representations(features=self.__dict__[f'{dataset}_{feature_type}_features_matrix'])
+        factors = np.concatenate((factors, np.ones((biases.shape[0], 1))), axis=1)
+        identifiers = [u[0] for u in sorted(self.__dict__[f'{dataset}_{feature_type}2ind'].items(), key=lambda x: x[1])]
+        return factors, identifiers
     
     def _format_predictions(self, predictions_dict, dataset):
         truths, predictions = [], []
@@ -147,21 +150,36 @@ class LightFM:
             predictions.append(predictions_dict[user] if all_users else predictions_dict.get(user, []))
         return truths, predictions
         
-    def evaluate(self):       
+    def evaluate(self, save_predictions):       
         # Format train/test user/item representations and identifiers
-        train_user_factors, train_user_identifiers, train_item_factors, train_item_identifiers = self._get_feature_representations(dataset='train')
-        test_user_factors, test_user_identifiers, test_item_factors, test_item_identifiers = self._get_feature_representations(dataset='test')
+        train_user_factors, train_user_identifiers = self._get_feature_representations(dataset='train', feature_type='user')
+        train_item_factors, train_item_identifiers = self._get_feature_representations(dataset='train', feature_type='item')
+        test_item_identifiers, test_user_identifiers = [], []
+        if self.test_user_features_matrix is not None:
+            test_user_factors, test_user_identifiers = self._get_feature_representations(dataset='test', feature_type='user')
+            user_embeddings = np.vstack([train_user_factors, test_user_factors])
+        else:
+            user_embeddings = train_user_factors
+        if self.test_item_features_matrix is not None:
+            test_item_factors, test_item_identifiers = self._get_feature_representations(dataset='test', feature_type='item')
+            item_embeddings = np.vstack([train_item_factors, test_item_factors])
+        else:
+            item_embeddings = train_item_factors
+        user_identifiers = train_user_identifiers+test_user_identifiers
+        item_identifiers = train_item_identifiers+test_item_identifiers
         
         # Predict
         # TODO: Add functionality to filter out items that users have already interacted with in train
         # TODO: Predict most popular items for new users, when we don't have user features and can't represent those new users
-        predictions_dict = tfrs_streaming.predict(user_identifiers=train_user_identifiers+test_user_identifiers, 
-                                                  user_embeddings=np.vstack([train_user_factors, test_user_factors]),
-                                                  item_identifiers=train_item_identifiers+test_item_identifiers, 
-                                                  item_embeddings=np.vstack([train_item_factors, test_item_factors]),
+        predictions_dict = tfrs_streaming.predict(user_identifiers=user_identifiers, 
+                                                  user_embeddings=user_embeddings,
+                                                  item_identifiers=item_identifiers, 
+                                                  item_embeddings=item_embeddings,
                                                   embedding_dtype='float32', 
                                                   n_recs=self.n_recs,
                                                   prediction_batch_size=self.tfrs_prediction_batch_size)
+        if save_predictions:
+            self.predictions_dict = predictions_dict
         
         # Format predictions
         train_truth, train_predictions = self._format_predictions(predictions_dict, dataset='train')
@@ -187,27 +205,28 @@ class LightFM:
                                    verbose=False)
             if (self.train_kwargs['eval_epochs'] == 'all') or (epoch in self.train_kwargs['eval_epochs']):
                 # Evaluate results
-                train_mapk, test_mapk = self.evaluate()
+                train_mapk, test_mapk = self.evaluate(save_predictions = (epoch==self.train_kwargs['num_epochs']))
                 self.eval_epochs.append(epoch)
                 self.train_evaluations.append(train_mapk)
                 self.test_evaluations.append(test_mapk)
                 
-                # Plot results
-                plt.plot(self.eval_epochs, self.train_evaluations, linestyle='dotted')
-                plt.scatter(self.eval_epochs, self.train_evaluations, label='Train')
-                plt.plot(self.eval_epochs, self.test_evaluations, linestyle='dotted')
-                plt.scatter(self.eval_epochs, self.test_evaluations, label='Test')
-                plt.xticks(self.eval_epochs)
-                plt.yticks(np.arange(0,1.1,.1))
-                plt.ylim(-0.05,1.05)
-                plt.legend(loc=(1.01,0))
-                plt.title('Evaluation')
-                plt.xlabel('Epoch')
-                plt.ylabel(f'MAP@{self.n_recs}')
-                plt.show();
-                
-                if epoch != self.train_kwargs['num_epochs']:
-                    clear_output(wait=True)
+                if self.train_kwargs['plot']:
+                    # Plot results
+                    plt.plot(self.eval_epochs, self.train_evaluations, linestyle='dotted')
+                    plt.scatter(self.eval_epochs, self.train_evaluations, label='Train')
+                    plt.plot(self.eval_epochs, self.test_evaluations, linestyle='dotted')
+                    plt.scatter(self.eval_epochs, self.test_evaluations, label='Test')
+                    plt.xticks(self.eval_epochs)
+                    plt.yticks(np.arange(0,1.1,.1))
+                    plt.ylim(-0.05,1.05)
+                    plt.legend(loc=(1.01,0))
+                    plt.title('Evaluation')
+                    plt.xlabel('Epoch')
+                    plt.ylabel(f'MAP@{self.n_recs}')
+                    plt.show();
+
+                    if epoch != self.train_kwargs['num_epochs']:
+                        clear_output(wait=True)
     
     def run(self, 
             train_df, test_df, 

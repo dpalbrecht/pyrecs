@@ -5,13 +5,21 @@ import itertools
 from functools import partial
 
 
-def _ohe_features(features, str_feature2ind):
-    vector = np.zeros(len(str_feature2ind))
-    for feature in features:
-        feature_ind = str_feature2ind.get(feature)
-        if feature_ind is not None:
-            vector[feature_ind] = 1
-    return vector.astype(int).tolist()
+def _determine_feature_types(features_dict):
+    feature_types = {'str':[],'list':[],'numeric':[],'array':[]}
+    first_feature = list(features_dict.values())[0]
+    for k, v in first_feature.items():
+        if (isinstance(v, list)) and isinstance(v[0], str):
+            feature_types['list'].append(k)
+        elif isinstance(v, str):
+            feature_types['str'].append(k)
+        elif type(v) in [int, float]:
+            feature_types['numeric'].append(k)
+        elif isinstance(v, np.ndarray) and (v.dtype in [int, float]):
+            feature_types['array'].append(k)
+        else:
+            raise ValueError(f"feature ('{k}') is not a supported type ('{v}')")
+    return feature_types
 
 def _format_features(features_dict, feature_types):
     feature_cols = feature_types['str']+feature_types['list']
@@ -24,6 +32,21 @@ def _format_features(features_dict, feature_types):
         features_df[col] = features_df[col].apply(lambda x: [f"{col}_{y}" for y in x])
     features_df['formatted_str_features'] = features_df[feature_cols].apply(lambda x: list(itertools.chain(*x.values)), axis=1)
     return features_df
+
+def _create_feature2ind(features_df):
+    if 'formatted_str_features' not in features_df.columns:
+        return {}
+    unique_str_features = set(itertools.chain(*features_df['formatted_str_features'].values))
+    str_feature2ind = dict(zip(unique_str_features, range(len(unique_str_features))))
+    return str_feature2ind
+
+def _ohe_features(features, str_feature2ind):
+    vector = np.zeros(len(str_feature2ind))
+    for feature in features:
+        feature_ind = str_feature2ind.get(feature)
+        if feature_ind is not None:
+            vector[feature_ind] = 1
+    return vector.astype(int).tolist()
 
 def _encode_features(features_df, str_feature2ind, feature_types):
     if len(str_feature2ind) > 0:
@@ -55,29 +78,6 @@ def _create_ordered_csr_matrix(id2featurevector, id2ind):
         features_matrix.append(id2featurevector[id_])
     features_matrix = csr_matrix(features_matrix)
     return features_matrix
-
-def _determine_feature_types(features_dict):
-    feature_types = {'str':[],'list':[],'numeric':[],'array':[]}
-    first_feature = list(features_dict.values())[0]
-    for k, v in first_feature.items():
-        if (isinstance(v, list)) and isinstance(v[0], str):
-            feature_types['list'].append(k)
-        elif isinstance(v, str):
-            feature_types['str'].append(k)
-        elif type(v) in [int, float]:
-            feature_types['numeric'].append(k)
-        elif isinstance(v, np.ndarray) and (v.dtype in [int, float]):
-            feature_types['array'].append(k)
-        else:
-            raise ValueError(f"feature ('{k}') is not a supported type ('{v}')")
-    return feature_types
-
-def _create_feature2ind(features_df):
-    if 'formatted_str_features' not in features_df.columns:
-        return {}
-    unique_str_features = set(itertools.chain(*features_df['formatted_str_features'].values))
-    str_feature2ind = dict(zip(unique_str_features, range(len(unique_str_features))))
-    return str_feature2ind
 
 
 def train_features_encoding(features_dict, id2ind, feature_type):

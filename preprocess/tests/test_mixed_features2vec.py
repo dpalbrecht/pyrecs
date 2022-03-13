@@ -35,7 +35,8 @@ def get_features_dict(exclude_cols=[]):
                                'numeric':[],'array':['embedding']})
                          ])
 def test_determine_feature_types(features_dict, expected_feature_types):
-    assert expected_feature_types == mixed_features2vec._determine_feature_types(features_dict)
+    feature_types = mixed_features2vec._determine_feature_types(features_dict)
+    assert expected_feature_types == feature_types
 
     
 @pytest.mark.parametrize("features_dict,expected_features_df",
@@ -62,17 +63,57 @@ def test_format_features(features_dict, expected_features_df):
     assert expected_features_df[features_df.columns].sort_values(by='index').equals(features_df.sort_values(by='index'))
 
     
-def test_create_feature2ind():
-    pass
+@pytest.mark.parametrize("features_df,expected_str_feature2ind",
+                         [
+                             (pd.DataFrame({'formatted_str_features':[['gender_m'],['gender_f'],
+                                                                      ['gender_b'],['gender_g']]}),
+                              {'gender_m':0,'gender_f':1,'gender_b':2,'gender_g':3}),
+                             (pd.DataFrame({'gender':['m','f','b','g']}),
+                              {})
+                         ])
+def test_create_feature2ind(features_df, expected_str_feature2ind):
+    str_feature2ind = mixed_features2vec._create_feature2ind(features_df)
+    assert sorted(list(expected_str_feature2ind.keys())) == sorted(list(str_feature2ind.keys()))
+    assert sorted(list(expected_str_feature2ind.values())) == sorted(list(str_feature2ind.values()))
 
-def test_encode_features():
-    pass
 
-def test_create_ordered_csr_matrix():
-    pass
+@pytest.mark.parametrize("features_dict,str_feature2ind,expected_id2featurevector",
+                         [
+                             (get_features_dict(),
+                              {'gender_m':0,'gender_f':1,'favorite_products_shirt':2,'favorite_products_pants':3},
+                              {'user1':np.array([1,0,1,1,21,1,2,3]),'user2':np.array([0,1,1,1,25,1,2,5])}),
+                             (get_features_dict(exclude_cols=['gender','favorite_products']),
+                              {},
+                              {'user1':np.array([21,1,2,3]),'user2':np.array([25,1,2,5])}),
+                             (get_features_dict(exclude_cols=['gender','favorite_products','age']),
+                              {},
+                              {'user1':np.array([1,2,3]),'user2':np.array([1,2,5])}),
+                             (get_features_dict(exclude_cols=['gender','favorite_products','embedding']),
+                              {},
+                              {'user1':np.array([21]),'user2':np.array([25])}),
+                             (get_features_dict(exclude_cols=['favorite_products','age','embedding']),
+                              {'gender_m':0,'gender_f':1},
+                              {'user1':np.array([1,0]),'user2':np.array([0,1])}),
+                             (get_features_dict(exclude_cols=['gender','age','embedding']),
+                              {'favorite_products_shirt':0,'favorite_products_pants':1},
+                              {'user1':np.array([1,1]),'user2':np.array([1,1])})
+                         ])
+def test_encode_features(features_dict, str_feature2ind, expected_id2featurevector):
+    feature_types = mixed_features2vec._determine_feature_types(features_dict)
+    features_df = mixed_features2vec._format_features(features_dict, feature_types)
+    id2featurevector = mixed_features2vec._encode_features(features_df, str_feature2ind, feature_types)
+    np.testing.assert_equal(expected_id2featurevector, id2featurevector)
 
-def test_ohe_features():
-    pass
 
-
-
+@pytest.mark.parametrize("id2featurevector,id2ind,expected_features_matrix",
+                         [
+                             ({'user1':np.array([1,2,3]),'user2':np.array([4,5,6])},
+                              {'user1':0,'user2':1},
+                              np.array([[1,2,3],[4,5,6]])),
+                             ({'user1':np.array([1,2,3]),'user2':np.array([4,5,6])},
+                              {'user1':1,'user2':0},
+                              np.array([[4,5,6],[1,2,3]]))
+                         ])
+def test_create_ordered_csr_matrix(id2featurevector, id2ind, expected_features_matrix):
+    features_matrix = mixed_features2vec._create_ordered_csr_matrix(id2featurevector, id2ind).todense()
+    assert (expected_features_matrix == features_matrix).all()
