@@ -7,86 +7,9 @@ from functools import partial
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 from pyrecs.evaluate.mapk import mapk
-from pyrecs.predict import tfrs_streaming
 from IPython.display import clear_output
-
-# TODO: Move this to a preprocess module and test it separately there
-def ohe_features(features, lookup):
-    vector = np.zeros(len(lookup))
-    for feature in features:
-        feature_ind = lookup.get(feature)
-        if feature_ind is not None:
-            vector[feature_ind] = 1
-    return csr_matrix(vector.astype(int))
-
-def format_features(features_dict, str_features, list_features):
-    features_df = pd.DataFrame(features_dict).T.reset_index()
-    for col in str_features:
-        features_df[col] = features_df[col].apply(lambda x: [f"{col}_{x}"])
-    for col in list_features:
-        features_df[col] = features_df[col].apply(lambda x: [f"{col}_{y}" for y in x])
-    features_df['formatted_features'] = features_df[str_features+list_features].apply(lambda x: list(itertools.chain(*x.values)), axis=1)
-    return features_df
-
-def encode_features(features_df, feature2ind):
-    feature_vectors = features_df['formatted_features'].apply(partial(ohe_features, lookup=feature2ind))
-    id2featurevector = dict(zip(features_df['index'], feature_vectors))
-    return id2featurevector
-
-# TODO: Handle numerical features as numericals, not strings
-def train_features_lookup(features_dict, id2ind, feature_type):
-    # Determine feature types
-    str_features, list_features = [], []
-    first_feature = list(features_dict.values())[0]
-    for k, v in first_feature.items():
-        if isinstance(v, list):
-            list_features.append(k)
-        elif isinstance(v, str) | (type(v) in [int, float]):
-            str_features.append(k)
-        else:
-            raise ValueError(f"feature ('{k}') is not a supported type ('{v}')")
-          
-    # Format features
-    features_df = format_features(features_dict, str_features, list_features)
-    
-    # Create feature 2 ind lookup
-    unique_features = set(itertools.chain(*features_df['formatted_features'].values))
-    feature2ind = dict(zip(unique_features, range(len(unique_features))))
-    
-    # Create id 2 feature lookup
-    id2featurevector = encode_features(features_df, feature2ind)
-    
-    # Create ordered csr_matrix of features
-    train_features_matrix = []
-    for data in sorted(list(id2ind.items()), key=lambda x: x[1], reverse=True):
-        id_, ind_ = data
-        train_features_matrix.append(id2featurevector[id_])
-    train_features_matrix = vstack(train_features_matrix)
-    
-    result = {
-        f'train_{feature_type}_feature2ind':feature2ind, 
-        f'train_{feature_type}_str_features':str_features, 
-        f'train_{feature_type}_list_features':list_features,
-        f'train_{feature_type}_features_matrix':train_features_matrix
-    }
-    
-    return result
-
-def encode_new_features(features_dict, id2ind, str_features, list_features, feature2ind):
-     # Format features
-    features_df = format_features(features_dict, str_features, list_features)
-    
-    # Create id 2 feature lookup
-    id2featurevector = encode_features(features_df, feature2ind)
-    
-    # Create ordered csr_matrix of features
-    features_matrix = []
-    for data in sorted(list(id2ind.items()), key=lambda x: x[1], reverse=True):
-        id_, ind_ = data
-        features_matrix.append(id2featurevector[id_])
-    features_matrix = vstack(features_matrix)
-    
-    return features_matrix
+from pyrecs.predict import tfrs_streaming
+from pyrecs.preprocess import mixed_features2vec
 
 
 class LightFM:
@@ -165,21 +88,20 @@ class LightFM:
         
     def _process_train_features(self, train_features_dict, feature_type):
         if len(train_features_dict) > 0:
-            feature_lookups = train_features_lookup(train_features_dict, 
-                                                    id2ind=self.__dict__[f'train_{feature_type}2ind'], 
-                                                    feature_type=feature_type)
-            self.__dict__.update(feature_lookups)
+            feature_encodings = mixed_features2vec.train_features_encoding(train_features_dict, 
+                                                                           id2ind=self.__dict__[f'train_{feature_type}2ind'], 
+                                                                           feature_type=feature_type)
+            self.__dict__.update(feature_encodings)
             
     def _process_test_features(self, test_features_dict, feature_type):
         if len(test_features_dict) > 0:
             num_train_keys = len(self.__dict__[f'train_{feature_type}2ind'])
             self.__dict__[f'test_{feature_type}2ind'] = dict(zip(test_features_dict.keys(),
                                                                  range(num_train_keys, len(test_features_dict.keys())+num_train_keys)))
-            self.__dict__[f'test_{feature_type}_features_matrix'] = encode_new_features(test_features_dict, 
-                                                                                        self.__dict__[f'test_{feature_type}2ind'],
-                                                                                        self.__dict__[f'train_{feature_type}_str_features'], 
-                                                                                        self.__dict__[f'train_{feature_type}_list_features'], 
-                                                                                        self.__dict__[f'train_{feature_type}_feature2ind'])
+            self.__dict__[f'test_{feature_type}_features_matrix'] = mixed_features2vec.encode_new_features(test_features_dict,
+                                                                                            self.__dict__[f'test_{feature_type}2ind'], 
+                                                                                            self.__dict__[f'train_{feature_type}_feature_types'],
+                                                                                            self.__dict__[f'train_{feature_type}_str_feature2ind'])
         
     def preprocess(self, train_df, test_df, 
                    train_user_features_dict, train_item_features_dict,
