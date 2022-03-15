@@ -210,6 +210,7 @@ class LightFM:
                 self.train_evaluations.append(train_mapk)
                 self.test_evaluations.append(test_mapk)
                 
+                clear_output()
                 if self.train_kwargs['plot']:
                     # Plot results
                     plt.plot(self.eval_epochs, self.train_evaluations, linestyle='dotted')
@@ -224,14 +225,11 @@ class LightFM:
                     plt.xlabel('Epoch')
                     plt.ylabel(f'MAP@{self.n_recs}')
                     plt.show();
-
-                    if epoch != self.train_kwargs['num_epochs']:
-                        clear_output(wait=True)
     
     def run(self, 
             train_df, test_df, 
-            train_user_features_dict, train_item_features_dict,
-            test_user_features_dict, test_item_features_dict):
+            train_user_features_dict={}, train_item_features_dict={},
+            test_user_features_dict={}, test_item_features_dict={}):
         self.preprocess(train_df, test_df, train_user_features_dict, train_item_features_dict, 
                         test_user_features_dict, test_item_features_dict)
         self.train()
