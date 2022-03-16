@@ -33,6 +33,15 @@ class LightFM:
                         train_user_features_dict, train_item_features_dict,
                         test_user_features_dict, test_item_features_dict):
         try:
+            if len(train_df) > 0:
+                assert isinstance(train_df[self.users_col].iloc[0], str)
+                assert isinstance(train_df[self.items_col].iloc[0], str)
+            if len(test_df) > 0:
+                assert isinstance(test_df[self.users_col].iloc[0], str)
+                assert isinstance(test_df[self.items_col].iloc[0], str)
+        except:
+            raise AssertionError('Train and Test, User and Item features are not string types.')
+        try:
             assert len(set(train_user_features_dict.keys()) & set(test_user_features_dict.keys())) == 0
             assert len(set(train_item_features_dict.keys()) & set(test_item_features_dict.keys())) == 0
         except:
@@ -63,6 +72,7 @@ class LightFM:
     def _format_dfs(self, df):
         return dict(df.groupby(self.users_col)[self.items_col].apply(lambda x: list(x.unique())))
     
+    # TODO: Be able to use interaction ratings as weights (interaction type)
     def _create_train_interactions_matrix(self, train_df, test_df):
         self.train_user2ind = dict(zip(train_df[self.users_col].unique(),
                                        range(train_df[self.users_col].nunique())))
@@ -191,6 +201,7 @@ class LightFM:
 
         return train_mapk, test_mapk
 
+    # TODO: Plot cold-start test MAP@K separately than warm-start, and then plot them together
     def train(self):
         self.model = lightfm.LightFM(**self.model_kwargs)
         ones_interactions_matrix = self.interactions_matrix.copy()

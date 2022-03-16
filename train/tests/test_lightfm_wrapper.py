@@ -78,6 +78,13 @@ def test_create_train_interactions_matrix(df, interactions_type):
 
 @pytest.mark.parametrize("inputs,expected_error",
                          [
+                             ({'train_df': pd.DataFrame({'users':[1,2,3],'items':[4,5,6]}),
+                               'test_df': pd.DataFrame({'users':[1,2,4],'items':[4,5,7]}),
+                               'train_user_features_dict': {},
+                               'test_user_features_dict': {},
+                               'train_item_features_dict': {},
+                               'test_item_features_dict': {}},
+                             'Train and Test, User and Item features are not string types.'),
                              ({'train_df': pd.DataFrame(),
                                'test_df': pd.DataFrame(),
                                'train_user_features_dict': {'user1':1},
