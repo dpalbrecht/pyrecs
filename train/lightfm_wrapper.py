@@ -15,7 +15,8 @@ from pyrecs.preprocess import mixed_features2vec
 class LightFM:
     def __init__(self, 
                  users_col='users', items_col='items', interactions_type='ones', 
-                 model_kwargs={}, train_kwargs={}, 
+                 model_kwargs={}, train_kwargs={},
+                 fill_most_popular=False,
                  n_recs=10, tfrs_prediction_batch_size=32):
         self.users_col = users_col
         self.items_col = items_col
@@ -24,6 +25,7 @@ class LightFM:
         self.train_kwargs = train_kwargs
         self.n_recs = n_recs
         self.tfrs_prediction_batch_size = tfrs_prediction_batch_size
+        self.fill_most_popular = fill_most_popular
         self.train_user_features_matrix, self.train_item_features_matrix = None, None
         self.test_user_features_matrix, self.test_item_features_matrix = None, None
         self.user_test_id2featurevector, self.item_test_id2featurevector = None, None
@@ -142,6 +144,10 @@ class LightFM:
         # Make sure n_recs isn't > number of items available
         unique_item_ids = set(train_df[self.items_col].unique().tolist() + test_df[self.items_col].unique().tolist())
         self.n_recs = min(self.n_recs, len(unique_item_ids))
+        
+        # Get most popular items
+        if self.fill_most_popular:
+            self.most_popular_items = self.train_df[self.items_col].value_counts().head(self.n_recs).index.tolist()
     
     def _get_feature_representations(self, dataset, feature_type):
         if feature_type == 'user':
@@ -153,12 +159,15 @@ class LightFM:
         return factors, identifiers
     
     def _format_predictions(self, predictions_dict, dataset):
-        truths, predictions = [], []
-        all_users = (self.train_user_features_matrix is not None) & (dataset == 'test')
+        formatted_truths, formatted_predictions = [], []
         for user, truth in self.__dict__[f'{dataset}_dict'].items():
-            truths.append(truth)
-            predictions.append(predictions_dict[user] if all_users else predictions_dict.get(user, []))
-        return truths, predictions
+            formatted_truths.append(truth)
+            predictions = predictions_dict.get(user, [])
+            if self.fill_most_popular:
+                for i in range(self.n_recs - len(predictions)):
+                    predictions.append(self.most_popular_items[i])
+            formatted_predictions.append(predictions)
+        return formatted_truths, formatted_predictions
         
     def evaluate(self, save_predictions):       
         # Format train/test user/item representations and identifiers
