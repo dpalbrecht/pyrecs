@@ -71,16 +71,18 @@ def _encode_features(features_df, str_feature2ind, feature_types):
     id2featurevector = dict(zip(features_df['index'], all_feature_vectors))
     return id2featurevector
 
-def _create_ordered_csr_matrix(id2featurevector, id2ind):
+def _create_ordered_csr_matrix(id2featurevector, id2ind, normalize):
     features_matrix = []
     for data in sorted(list(id2ind.items()), key=lambda x: x[1]):
         id_, ind_ = data
         features_matrix.append(id2featurevector[id_])
+    if normalize:
+        features_matrix = np.divide(features_matrix, np.sum(features_matrix,axis=1).reshape(-1,1))
     features_matrix = csr_matrix(features_matrix)
     return features_matrix
 
 
-def train_features_encoding(features_dict, id2ind, feature_type):
+def train_features_encoding(features_dict, id2ind, feature_type, normalize):
     # Determine feature types
     feature_types = _determine_feature_types(features_dict)
           
@@ -94,7 +96,7 @@ def train_features_encoding(features_dict, id2ind, feature_type):
     id2featurevector = _encode_features(features_df, str_feature2ind, feature_types)
     
     # Create ordered csr_matrix of features
-    train_features_matrix = _create_ordered_csr_matrix(id2featurevector, id2ind)
+    train_features_matrix = _create_ordered_csr_matrix(id2featurevector, id2ind, normalize)
     
     result = {
         f'train_{feature_type}_str_feature2ind':str_feature2ind, 
@@ -104,7 +106,7 @@ def train_features_encoding(features_dict, id2ind, feature_type):
     
     return result
 
-def encode_new_features(features_dict, id2ind, feature_types, str_feature2ind):
+def encode_new_features(features_dict, id2ind, feature_types, str_feature2ind, normalize):
      # Format features
     features_df = _format_features(features_dict, feature_types)
     
@@ -112,6 +114,6 @@ def encode_new_features(features_dict, id2ind, feature_types, str_feature2ind):
     id2featurevector = _encode_features(features_df, str_feature2ind, feature_types)
     
     # Create ordered csr_matrix of features
-    features_matrix = _create_ordered_csr_matrix(id2featurevector, id2ind)
+    features_matrix = _create_ordered_csr_matrix(id2featurevector, id2ind, normalize)
     
     return features_matrix

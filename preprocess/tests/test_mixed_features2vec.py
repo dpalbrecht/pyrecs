@@ -115,5 +115,12 @@ def test_encode_features(features_dict, str_feature2ind, expected_id2featurevect
                               np.array([[4,5,6],[1,2,3]]))
                          ])
 def test_create_ordered_csr_matrix(id2featurevector, id2ind, expected_features_matrix):
-    features_matrix = mixed_features2vec._create_ordered_csr_matrix(id2featurevector, id2ind).todense()
+    features_matrix = mixed_features2vec._create_ordered_csr_matrix(id2featurevector, id2ind, normalize=False).todense()
     assert (expected_features_matrix == features_matrix).all()
+    
+def test_create_ordered_csr_matrix_normalize():
+    id2featurevector = {'user1':np.array([1,2,3]),'user2':np.array([4,5,6])}
+    id2ind = {'user1':0,'user2':1}
+    expected_features_matrix = np.array([[1,2,3],[4,5,6]])
+    features_matrix = mixed_features2vec._create_ordered_csr_matrix(id2featurevector, id2ind, normalize=True).todense()
+    assert set(np.asarray(np.sum(features_matrix, axis=1)).flatten().tolist()) == set([1])

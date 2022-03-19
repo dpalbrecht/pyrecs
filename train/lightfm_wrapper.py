@@ -12,11 +12,13 @@ from pyrecs.predict import tfrs_streaming
 from pyrecs.preprocess import mixed_features2vec
 
 
+# TODO: Clean up model inputs here and in tests
 class LightFM:
     def __init__(self, 
                  users_col='users', items_col='items', interactions_type='ones', 
                  model_kwargs={}, train_kwargs={},
-                 fill_most_popular=False,
+                 fill_most_popular=False, normalize_features=False,
+                 remove_factor_biases=False,
                  n_recs=10, tfrs_prediction_batch_size=32):
         self.users_col = users_col
         self.items_col = items_col
@@ -26,6 +28,8 @@ class LightFM:
         self.n_recs = n_recs
         self.tfrs_prediction_batch_size = tfrs_prediction_batch_size
         self.fill_most_popular = fill_most_popular
+        self.normalize_features = normalize_features
+        self.remove_factor_biases = remove_factor_biases
         self.train_user_features_matrix, self.train_item_features_matrix = None, None
         self.test_user_features_matrix, self.test_item_features_matrix = None, None
         self.user_test_id2featurevector, self.item_test_id2featurevector = None, None
@@ -74,7 +78,7 @@ class LightFM:
     def _format_dfs(self, df):
         return dict(df.groupby(self.users_col)[self.items_col].apply(lambda x: list(x.unique())))
     
-    # TODO: Be able to use interaction ratings as weights (interaction type)
+    # TODO: Be able to use interaction ratings as weights (new interaction_type)
     def _create_train_interactions_matrix(self, train_df, test_df):
         self.train_user2ind = dict(zip(train_df[self.users_col].unique(),
                                        range(train_df[self.users_col].nunique())))
@@ -104,7 +108,8 @@ class LightFM:
         if len(train_features_dict) > 0:
             feature_encodings = mixed_features2vec.train_features_encoding(train_features_dict, 
                                                                            id2ind=self.__dict__[f'train_{feature_type}2ind'], 
-                                                                           feature_type=feature_type)
+                                                                           feature_type=feature_type,
+                                                                           normalize=self.normalize_features)
             self.__dict__.update(feature_encodings)
             
     def _process_test_features(self, test_features_dict, feature_type):
@@ -115,7 +120,8 @@ class LightFM:
             self.__dict__[f'test_{feature_type}_features_matrix'] = mixed_features2vec.encode_new_features(test_features_dict,
                                                                                             self.__dict__[f'test_{feature_type}2ind'], 
                                                                                             self.__dict__[f'train_{feature_type}_feature_types'],
-                                                                                            self.__dict__[f'train_{feature_type}_str_feature2ind'])
+                                                                                            self.__dict__[f'train_{feature_type}_str_feature2ind'],
+                                                                                            normalize=self.normalize_features)
         
     def preprocess(self, train_df, test_df, 
                    train_user_features_dict, train_item_features_dict,
@@ -152,10 +158,12 @@ class LightFM:
     def _get_feature_representations(self, dataset, feature_type):
         if feature_type == 'user':
             biases, factors = self.model.get_user_representations(features=self.__dict__[f'{dataset}_user_features_matrix'])
-            factors = np.concatenate((factors, np.ones((biases.shape[0], 1))), axis=1)
+            if not self.remove_factor_biases:
+                factors = np.concatenate((factors, np.ones((biases.shape[0], 1))), axis=1)
         else:
             biases, factors = self.model.get_item_representations(features=self.__dict__[f'{dataset}_item_features_matrix'])
-            factors = np.concatenate((factors, biases.reshape(-1, 1)), axis=1)
+            if not self.remove_factor_biases:
+                factors = np.concatenate((factors, biases.reshape(-1, 1)), axis=1)
         identifiers = [u[0] for u in sorted(self.__dict__[f'{dataset}_{feature_type}2ind'].items(), key=lambda x: x[1])]
         return factors, identifiers
     
@@ -165,11 +173,15 @@ class LightFM:
             formatted_truths.append(truth)
             predictions = predictions_dict.get(user, [])
             if self.fill_most_popular:
-                for i in range(self.n_recs - len(predictions)):
-                    predictions.append(self.most_popular_items[i])
+                while len(predictions) < self.n_recs:
+                    for i in self.most_popular_items:
+                        if i not in predictions:
+                            predictions.append(i)
             formatted_predictions.append(predictions)
         return formatted_truths, formatted_predictions
         
+    # TODO: Add analysis for novelty and diversity of recommendations
+    # TODO: Add functionality to filter out items that users have already interacted with in train
     def evaluate(self, save_predictions):       
         # Format train/test user/item representations and identifiers
         train_user_factors, train_user_identifiers = self._get_feature_representations(dataset='train', feature_type='user')
@@ -189,7 +201,6 @@ class LightFM:
         item_identifiers = train_item_identifiers+test_item_identifiers
         
         # Predict
-        # TODO: Add functionality to filter out items that users have already interacted with in train
         predictions_dict = tfrs_streaming.predict(user_identifiers=user_identifiers, 
                                                   user_embeddings=user_embeddings,
                                                   item_identifiers=item_identifiers, 
@@ -237,9 +248,10 @@ class LightFM:
                     plt.scatter(self.eval_epochs, self.train_evaluations, label='Train')
                     plt.plot(self.eval_epochs, self.test_evaluations, linestyle='dotted')
                     plt.scatter(self.eval_epochs, self.test_evaluations, label='Test')
+                    for eval_list in [self.train_evaluations, self.test_evaluations]:
+                        for n, e in enumerate(eval_list):
+                            plt.text(n+1, e, f"{e:.3f}", ha='center', va='bottom')
                     plt.xticks(self.eval_epochs)
-                    plt.yticks(np.arange(0,1.1,.1))
-                    plt.ylim(-0.05,1.05)
                     plt.legend(loc=(1.01,0))
                     plt.title('Evaluation')
                     plt.xlabel('Epoch')
