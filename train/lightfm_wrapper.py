@@ -147,14 +147,15 @@ class LightFM:
         
         # Get most popular items
         if self.fill_most_popular:
-            self.most_popular_items = self.train_df[self.items_col].value_counts().head(self.n_recs).index.tolist()
+            self.most_popular_items = train_df[self.items_col].value_counts().head(self.n_recs).index.tolist()
     
     def _get_feature_representations(self, dataset, feature_type):
         if feature_type == 'user':
-            biases, factors = self.model.get_user_representations(features=self.__dict__[f'{dataset}_{feature_type}_features_matrix'])
+            biases, factors = self.model.get_user_representations(features=self.__dict__[f'{dataset}_user_features_matrix'])
+            factors = np.concatenate((factors, np.ones((biases.shape[0], 1))), axis=1)
         else:
-            biases, factors = self.model.get_item_representations(features=self.__dict__[f'{dataset}_{feature_type}_features_matrix'])
-        factors = np.concatenate((factors, np.ones((biases.shape[0], 1))), axis=1)
+            biases, factors = self.model.get_item_representations(features=self.__dict__[f'{dataset}_item_features_matrix'])
+            factors = np.concatenate((factors, biases.reshape(-1, 1)), axis=1)
         identifiers = [u[0] for u in sorted(self.__dict__[f'{dataset}_{feature_type}2ind'].items(), key=lambda x: x[1])]
         return factors, identifiers
     
@@ -189,7 +190,6 @@ class LightFM:
         
         # Predict
         # TODO: Add functionality to filter out items that users have already interacted with in train
-        # TODO: Predict most popular items for new users, when we don't have user features and can't represent those new users
         predictions_dict = tfrs_streaming.predict(user_identifiers=user_identifiers, 
                                                   user_embeddings=user_embeddings,
                                                   item_identifiers=item_identifiers, 
