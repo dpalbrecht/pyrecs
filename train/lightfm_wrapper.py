@@ -19,6 +19,7 @@ class LightFM:
                  model_kwargs={}, train_kwargs={},
                  fill_most_popular=False, normalize_features=False,
                  remove_factor_biases=False,
+                 exclude_seen_items=False,
                  n_recs=10, tfrs_prediction_batch_size=32):
         self.users_col = users_col
         self.items_col = items_col
@@ -30,6 +31,7 @@ class LightFM:
         self.fill_most_popular = fill_most_popular
         self.normalize_features = normalize_features
         self.remove_factor_biases = remove_factor_biases
+        self.exclude_seen_items = exclude_seen_items
         self.train_user_features_matrix, self.train_item_features_matrix = None, None
         self.test_user_features_matrix, self.test_item_features_matrix = None, None
         self.user_test_id2featurevector, self.item_test_id2featurevector = None, None
@@ -206,6 +208,7 @@ class LightFM:
                                                   item_identifiers=item_identifiers, 
                                                   item_embeddings=item_embeddings,
                                                   embedding_dtype='float32', 
+                                                  user2excludeitems=self.train_dict if self.exclude_seen_items else {},
                                                   n_recs=self.n_recs,
                                                   prediction_batch_size=self.tfrs_prediction_batch_size)
         if save_predictions:
@@ -221,7 +224,7 @@ class LightFM:
 
         return train_mapk, test_mapk
 
-    # TODO: Plot cold-start test MAP@K separately than warm-start, and then plot them together
+    # TODO: Plot existing users and new users MAP@K values separately and together
     def train(self):
         self.model = lightfm.LightFM(**self.model_kwargs)
         ones_interactions_matrix = self.interactions_matrix.copy()

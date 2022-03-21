@@ -5,6 +5,7 @@ import itertools
 
 def predict(user_identifiers, user_embeddings,
             item_identifiers, item_embeddings,
+            user2excludeitems={},
             embedding_dtype='float32', 
             n_recs=10,
             prediction_batch_size=32):
@@ -12,19 +13,36 @@ def predict(user_identifiers, user_embeddings,
     # Create tfrs.Streaming instance
     stream = tfrs.layers.factorized_top_k.Streaming()
     stream.index_from_dataset(
-        tf.data.Dataset.from_tensor_slices({
+    tf.data.Dataset.from_tensors({
             'identifier':item_identifiers,
             'embedding':item_embeddings.astype(embedding_dtype)
-        }).batch(1).map(lambda x: (x['identifier'], x['embedding']))
+        }).map(lambda x: (x['identifier'], x['embedding']))
     )
     
     # Get batched predictions
     if len(user_embeddings.shape) == 1:
         user_embeddings = user_embeddings[None,:]
-    input_embeddings = tf.constant(user_embeddings, dtype=embedding_dtype)
-    predictions = tf.data.Dataset.from_tensor_slices(input_embeddings)\
-                    .batch(prediction_batch_size)\
-                    .map(lambda x: stream(x, k=n_recs)[1])
+    if len(user2excludeitems) == 0:
+        pred_func = lambda x: stream(tf.squeeze(x['embedding']), k=n_recs)[1]
+        exclusions = ['']*len(user_identifiers)
+    else:
+        pred_func = lambda x: stream.query_with_exclusions(tf.squeeze(x['embedding']), 
+                                                           exclusions=x['exclusions'],
+                                                           k=n_recs)[1]
+        max_exclude_len = max([len(v) for v in user2excludeitems.values()])
+        exclusions = []
+        for user_id in user_identifiers:
+            temp_vec = ['']*max_exclude_len
+            for n, item in enumerate(user2excludeitems.get(user_id, [])):
+                temp_vec[n] = item
+            exclusions.append(temp_vec)
+    predictions = tf.data.Dataset.from_tensor_slices({
+                    'identifier':user_identifiers, 
+                    'embedding':user_embeddings.astype(embedding_dtype),
+                    'exclusions':exclusions
+                })\
+                .batch(prediction_batch_size)\
+                .map(pred_func)
     
     # Format predictions
     formatted_predictions = []

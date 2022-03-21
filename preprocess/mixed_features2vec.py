@@ -81,7 +81,7 @@ def _create_ordered_csr_matrix(id2featurevector, id2ind, normalize):
     features_matrix = csr_matrix(features_matrix)
     return features_matrix
 
-
+# TODO: Be able to normalize only groups of features, and set relative weights
 def train_features_encoding(features_dict, id2ind, feature_type, normalize):
     # Determine feature types
     feature_types = _determine_feature_types(features_dict)
