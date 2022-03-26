@@ -17,9 +17,9 @@ class LightFM:
     def __init__(self, 
                  users_col='users', items_col='items', interactions_type='ones', 
                  model_kwargs={}, train_kwargs={},
-                 fill_most_popular=False, normalize_features=False,
+                 fill_most_popular=False, 
+                 normalize_features=False,
                  remove_factor_biases=False,
-                 exclude_seen_items=False,
                  n_recs=10, tfrs_prediction_batch_size=32):
         self.users_col = users_col
         self.items_col = items_col
@@ -31,7 +31,6 @@ class LightFM:
         self.fill_most_popular = fill_most_popular
         self.normalize_features = normalize_features
         self.remove_factor_biases = remove_factor_biases
-        self.exclude_seen_items = exclude_seen_items
         self.train_user_features_matrix, self.train_item_features_matrix = None, None
         self.test_user_features_matrix, self.test_item_features_matrix = None, None
         self.user_test_id2featurevector, self.item_test_id2featurevector = None, None
@@ -169,21 +168,28 @@ class LightFM:
         identifiers = [u[0] for u in sorted(self.__dict__[f'{dataset}_{feature_type}2ind'].items(), key=lambda x: x[1])]
         return factors, identifiers
     
+    # TODO: Think, do I move this into evaluate?
+            # I need to do most popular items here because predict doesn't make recommendations for new users 
+            # when we have no embedding (cold-start, no user features)
+            # But I'll need this evaluation option for other models
+            # Or somehow incorporate this into tfrs_streaming? Something like if I simply pass train and test dictionaries
     def _format_predictions(self, predictions_dict, dataset):
         formatted_truths, formatted_predictions = [], []
         for user, truth in self.__dict__[f'{dataset}_dict'].items():
             formatted_truths.append(truth)
-            predictions = predictions_dict.get(user, [])
-            if self.fill_most_popular:
-                while len(predictions) < self.n_recs:
-                    for i in self.most_popular_items:
-                        if i not in predictions:
-                            predictions.append(i)
+            predictions = predictions_dict[dataset].get(user, [])
+            if self.fill_most_popular and (len(predictions) < self.n_recs):
+                for i in self.most_popular_items:
+                    if i not in predictions:
+                        predictions.append(i)
+                    if len(predictions) == self.n_recs:
+                        break
             formatted_predictions.append(predictions)
         return formatted_truths, formatted_predictions
         
     # TODO: Add analysis for novelty and diversity of recommendations
-    # TODO: Add functionality to filter out items that users have already interacted with in train
+    # TODO: Add functionality to choose whether to filter out items that users have already interacted with in train. As of now it assumes we do
+        # Not as easy as passing train_user_interactions={} right now (see note in tfrs_streaming.py)
     def evaluate(self, save_predictions):       
         # Format train/test user/item representations and identifiers
         train_user_factors, train_user_identifiers = self._get_feature_representations(dataset='train', feature_type='user')
@@ -208,7 +214,7 @@ class LightFM:
                                                   item_identifiers=item_identifiers, 
                                                   item_embeddings=item_embeddings,
                                                   embedding_dtype='float32', 
-                                                  user2excludeitems=self.train_dict if self.exclude_seen_items else {},
+                                                  train_user_interactions=self.train_dict,
                                                   n_recs=self.n_recs,
                                                   prediction_batch_size=self.tfrs_prediction_batch_size)
         if save_predictions:
