@@ -4,10 +4,6 @@ def post_filter(predictions,
                 train_user2interactions={},
                 test_user2interactions={}):
     
-    # Assumption check
-    if (len(popular_items) > 0) & ((len(train_user2interactions) == 0) & (len(test_user2interactions) == 0)):
-        raise ValueError('Popular items will not be added. Re-evaluate inputs or remove popular items.')
-    
     # For users in test with train interactions, we want to:
     # 1) Filter out those interactions if provided
     # 2) Fill them with popular items unless we have enough recommendations already (set n_recs in predict higher than here)

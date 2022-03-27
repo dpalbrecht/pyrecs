@@ -10,32 +10,35 @@ from pyrecs.evaluate.mapk import mapk
 from IPython.display import clear_output
 from pyrecs.predict import tfrs_streaming
 from pyrecs.preprocess import mixed_features2vec
+from pyrecs.postprocess.post_filter import post_filter
 
 
 # TODO: Clean up model inputs here and in tests
+# TODO: Abstract more of these methods and move to other submodules
 class LightFM:
     def __init__(self, 
-                 users_col='users', items_col='items', interactions_type='ones', 
-                 model_kwargs={}, train_kwargs={},
-                 fill_most_popular=False, 
-                 normalize_features=False,
-                 remove_factor_biases=False,
-                 n_recs=10, tfrs_prediction_batch_size=32):
-        self.users_col = users_col
-        self.items_col = items_col
-        self.interactions_type = interactions_type
+                 preprocess_kwargs={},
+                 model_kwargs={}, 
+                 train_kwargs={},
+                 predict_kwargs={},
+                 postprocess_kwargs={}):
+        self.users_col = preprocess_kwargs.get('users_col','users')
+        self.items_col = preprocess_kwargs.get('items_col','items')
+        self.interactions_type = preprocess_kwargs.get('interactions_type','ones')
+        self.normalize_features = preprocess_kwargs.get('normalize_features',True)
+        self.remove_factor_biases = preprocess_kwargs.get('remove_factor_biases',False)
         self.model_kwargs = model_kwargs
         self.train_kwargs = train_kwargs
-        self.n_recs = n_recs
-        self.tfrs_prediction_batch_size = tfrs_prediction_batch_size
-        self.fill_most_popular = fill_most_popular
-        self.normalize_features = normalize_features
-        self.remove_factor_biases = remove_factor_biases
+        self.predict_n_recs = predict_kwargs.get('n_recs',10)
+        self.tfrs_prediction_batch_size = predict_kwargs.get('tfrs_prediction_batch_size',32)
+        self.postprocess_n_recs = postprocess_kwargs.get('n_recs',10)
+        self.remove_train_interactions_from_test = postprocess_kwargs.get('remove_train_interactions_from_test',True)
+        self.fill_most_popular_items = postprocess_kwargs.get('fill_most_popular_items',True)
         self.train_user_features_matrix, self.train_item_features_matrix = None, None
         self.test_user_features_matrix, self.test_item_features_matrix = None, None
         self.user_test_id2featurevector, self.item_test_id2featurevector = None, None
         self.test_user2ind, self.test_item2ind = {}, {}
-        
+                
     def _quality_checks(self, train_df, test_df,
                         train_user_features_dict, train_item_features_dict,
                         test_user_features_dict, test_item_features_dict):
@@ -104,7 +107,7 @@ class LightFM:
             raise ValueError(f"interactions_type ('{self.interactions_type}') not implemented.")
         self.interactions_matrix = coo_matrix((interactions, (users, items)), 
                                               shape=(len(self.train_user2ind), len(self.train_item2ind)))
-        
+
     def _process_train_features(self, train_features_dict, feature_type):
         if len(train_features_dict) > 0:
             feature_encodings = mixed_features2vec.train_features_encoding(train_features_dict, 
@@ -112,7 +115,7 @@ class LightFM:
                                                                            feature_type=feature_type,
                                                                            normalize=self.normalize_features)
             self.__dict__.update(feature_encodings)
-            
+
     def _process_test_features(self, test_features_dict, feature_type):
         if len(test_features_dict) > 0:
             num_train_keys = len(self.__dict__[f'train_{feature_type}2ind'])
@@ -123,7 +126,7 @@ class LightFM:
                                                                                             self.__dict__[f'train_{feature_type}_feature_types'],
                                                                                             self.__dict__[f'train_{feature_type}_str_feature2ind'],
                                                                                             normalize=self.normalize_features)
-        
+
     def preprocess(self, train_df, test_df, 
                    train_user_features_dict, train_item_features_dict,
                    test_user_features_dict, test_item_features_dict):
@@ -148,14 +151,14 @@ class LightFM:
         self._process_test_features(test_user_features_dict, feature_type='user')
         self._process_test_features(test_item_features_dict, feature_type='item')
         
-        # Make sure n_recs isn't > number of items available
+        # Make sure postprocess_n_recs isn't > number of items available
         unique_item_ids = set(train_df[self.items_col].unique().tolist() + test_df[self.items_col].unique().tolist())
-        self.n_recs = min(self.n_recs, len(unique_item_ids))
+        self.postprocess_n_recs = min(self.postprocess_n_recs, len(unique_item_ids))
         
         # Get most popular items
-        if self.fill_most_popular:
-            self.most_popular_items = train_df[self.items_col].value_counts().head(self.n_recs).index.tolist()
-    
+        if self.fill_most_popular_items:
+            self.most_popular_items = train_df[self.items_col].value_counts().head(self.postprocess_n_recs).index.tolist()
+
     def _get_feature_representations(self, dataset, feature_type):
         if feature_type == 'user':
             biases, factors = self.model.get_user_representations(features=self.__dict__[f'{dataset}_user_features_matrix'])
@@ -167,29 +170,15 @@ class LightFM:
                 factors = np.concatenate((factors, biases.reshape(-1, 1)), axis=1)
         identifiers = [u[0] for u in sorted(self.__dict__[f'{dataset}_{feature_type}2ind'].items(), key=lambda x: x[1])]
         return factors, identifiers
-    
-    # TODO: Think, do I move this into evaluate?
-            # I need to do most popular items here because predict doesn't make recommendations for new users 
-            # when we have no embedding (cold-start, no user features)
-            # But I'll need this evaluation option for other models
-            # Or somehow incorporate this into tfrs_streaming? Something like if I simply pass train and test dictionaries
+
     def _format_predictions(self, predictions_dict, dataset):
         formatted_truths, formatted_predictions = [], []
         for user, truth in self.__dict__[f'{dataset}_dict'].items():
             formatted_truths.append(truth)
-            predictions = predictions_dict[dataset].get(user, [])
-            if self.fill_most_popular and (len(predictions) < self.n_recs):
-                for i in self.most_popular_items:
-                    if i not in predictions:
-                        predictions.append(i)
-                    if len(predictions) == self.n_recs:
-                        break
+            predictions = predictions_dict[dataset][user]
             formatted_predictions.append(predictions)
         return formatted_truths, formatted_predictions
-        
-    # TODO: Add analysis for novelty and diversity of recommendations
-    # TODO: Add functionality to choose whether to filter out items that users have already interacted with in train. As of now it assumes we do
-        # Not as easy as passing train_user_interactions={} right now (see note in tfrs_streaming.py)
+
     def evaluate(self, save_predictions):       
         # Format train/test user/item representations and identifiers
         train_user_factors, train_user_identifiers = self._get_feature_representations(dataset='train', feature_type='user')
@@ -213,10 +202,17 @@ class LightFM:
                                                   user_embeddings=user_embeddings,
                                                   item_identifiers=item_identifiers, 
                                                   item_embeddings=item_embeddings,
-                                                  embedding_dtype='float32', 
-                                                  train_user_interactions=self.train_dict,
-                                                  n_recs=self.n_recs,
+                                                  n_recs=self.predict_n_recs,
+                                                  train_users=list(self.train_dict.keys()), 
+                                                  test_users=list(self.test_dict.keys()),
                                                   prediction_batch_size=self.tfrs_prediction_batch_size)
+
+        post_filter(predictions=predictions_dict,
+                    n_recs=self.postprocess_n_recs,
+                    popular_items=self.most_popular_items if self.fill_most_popular_items else [],
+                    train_user2interactions=self.train_dict if self.remove_train_interactions_from_test else {},
+                    test_user2interactions=self.test_dict)
+        
         if save_predictions:
             self.predictions_dict = predictions_dict
         
@@ -225,8 +221,8 @@ class LightFM:
         test_truth, test_predictions = self._format_predictions(predictions_dict, dataset='test')
             
         # Calculate MAP@K
-        train_mapk = mapk(train_truth, train_predictions, k=self.n_recs)
-        test_mapk = mapk(test_truth, test_predictions, k=self.n_recs)
+        train_mapk = mapk(train_truth, train_predictions, k=self.postprocess_n_recs)
+        test_mapk = mapk(test_truth, test_predictions, k=self.postprocess_n_recs)
 
         return train_mapk, test_mapk
 
@@ -264,7 +260,7 @@ class LightFM:
                     plt.legend(loc=(1.01,0))
                     plt.title('Evaluation')
                     plt.xlabel('Epoch')
-                    plt.ylabel(f'MAP@{self.n_recs}')
+                    plt.ylabel(f'MAP@{self.postprocess_n_recs}')
                     plt.show();
     
     def run(self, 

@@ -51,7 +51,7 @@ def format_test_parameters(funcs):
                                                  create_df_3users_3items_yes_duplicates])
                         )
 def test_create_train_interactions_matrix(df, interactions_type):
-    lfm = lightfm_wrapper.LightFM(interactions_type=interactions_type)
+    lfm = lightfm_wrapper.LightFM(preprocess_kwargs={'interactions_type':interactions_type})
     lfm._create_train_interactions_matrix(train_df=df.copy(), 
                                           test_df=pd.DataFrame({'users':[1],'items':[1]}),)
     interactions_matrix = lfm.interactions_matrix.todense()

@@ -11,7 +11,7 @@ def predict(user_identifiers, user_embeddings,
     
     # Assumptions check
     try:
-        assert set(user_identifiers) == set(train_users+test_users)
+        assert len(set(user_identifiers) & set(train_users+test_users)) == len(set(user_identifiers))
     except:
         raise AssertionError('All user identifiers must be in one or both of train/test users.')
     train_users = {t:1 for t in train_users}
