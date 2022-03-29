@@ -130,32 +130,63 @@ def test_quality_checks(inputs,expected_error):
     assert expected_error == str(error.value)
 
 
-def test_no_side_features():
-    model_kwargs = {
-    'no_components':10,
-    'learning_rate':0.05,
-    'loss':'warp',
-    'random_state':42
-    }
-    train_kwargs = {
-        'num_epochs':2,
-        'num_threads':1,
-        'eval_epochs':'all',
-        'plot':False
-    }
-    lfm = lightfm_wrapper.LightFM(model_kwargs=model_kwargs, 
-                                  train_kwargs=train_kwargs)
-    train_df = pd.DataFrame({'users':['user1','user2'],'items':['item1','item2']})
-    test_df = pd.DataFrame({'users':['user1','user3'],'items':['item1','item3']})
-    train_user_features_dict = {}
-    test_user_features_dict = {}
-    train_item_features_dict = {}
-    test_item_features_dict = {}
-    lfm.run(train_df, test_df, 
-            train_user_features_dict, train_item_features_dict,
-            test_user_features_dict, test_item_features_dict)
-    assert sorted(list(lfm.predictions_dict.keys())) == sorted(['user1','user2'])
-    assert sorted(set(itertools.chain(*list(lfm.predictions_dict.values())))) == sorted(['item1','item2'])
+@pytest.mark.parametrize("inputs,expected_predictions",
+                         [
+                             ({
+                               'postprocess_kwargs':{
+                                   'remove_train_interactions_from_test':False,
+                                   'fill_most_popular_items':False},
+                               'train_df':pd.DataFrame({'users':['user1','user2'],'items':['item1','item2']}),
+                               'test_df':pd.DataFrame({'users':['user1','user3'],'items':['item1','item3']})},
+                              {'train':{'user1':['item1','item2'], 
+                                        'user2':['item1','item2']},
+                               'test':{'user1':['item1','item2'], 
+                                       'user3':[]}}),
+                             ({'postprocess_kwargs':{
+                                   'remove_train_interactions_from_test':True,
+                                   'fill_most_popular_items':False},
+                               'train_df':pd.DataFrame({'users':['user1','user2'],'items':['item1','item2']}),
+                               'test_df':pd.DataFrame({'users':['user1','user3'],'items':['item1','item3']})},
+                              {'train':{'user1':['item1','item2'], 
+                                        'user2':['item1','item2']},
+                               'test':{'user1':['item2'], 
+                                       'user3':[]}}),
+                             ({'postprocess_kwargs':{
+                                   'remove_train_interactions_from_test':True,
+                                   'fill_most_popular_items':True},
+                               'train_df':pd.DataFrame({'users':['user1','user2'],'items':['item1','item2']}),
+                               'test_df':pd.DataFrame({'users':['user1','user3'],'items':['item1','item3']})},
+                              {'train':{'user1':['item1','item2'], 
+                                        'user2':['item1','item2']},
+                               'test':{'user1':['item2'], 
+                                       'user3':['item1','item2']}}),
+                             ({'postprocess_kwargs':{
+                                   'remove_train_interactions_from_test':False,
+                                   'fill_most_popular_items':True},
+                               'train_df':pd.DataFrame({'users':['user1','user2'],'items':['item1','item2']}),
+                               'test_df':pd.DataFrame({'users':['user1','user3'],'items':['item1','item3']})},
+                              {'train':{'user1':['item1','item2'], 
+                                        'user2':['item1','item2']},
+                               'test':{'user1':['item1','item2'], 
+                                       'user3':['item1','item2']}})
+                         ])
+def test_no_side_features(inputs,expected_predictions):
+    lfm = lightfm_wrapper.LightFM(model_kwargs={
+                                  'no_components':10,
+                                  'learning_rate':0.05,
+                                  'loss':'warp',
+                                  'random_state':42},
+                                  train_kwargs={
+                                   'num_epochs':2,
+                                   'num_threads':1,
+                                   'eval_epochs':'all',
+                                   'plot':False},        
+                                  postprocess_kwargs=inputs['postprocess_kwargs'])
+    lfm.run(inputs['train_df'], inputs['test_df'], 
+            train_user_features_dict={}, train_item_features_dict={},
+            test_user_features_dict={}, test_item_features_dict={})
+    lfm.predictions_dict = {k:{kk:sorted(vv) for kk,vv in v.items()} for k,v in lfm.predictions_dict.items()}
+    assert lfm.predictions_dict == expected_predictions
 
 
 def test_no_user_side_features():
