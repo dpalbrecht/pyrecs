@@ -1,19 +1,21 @@
-import tensorflow_recommenders  as tfrs
+import tensorflow_recommenders as tfrs
 import tensorflow as tf
-import itertools
 
 
-# TODO: Add functionality to pass train_user_interactions={} and get predictions in train
-        # Right now, I assume users not in train_user_interactions are test users and that's not true
-        # So if I pass in train_user_interactions={} with the intent not to remove interactions, I end up with 0 train predictions
-        # Maybe pass hash maps of train and test users, along with interactions to remove from train (if supplied)?
-            # Then I can make recommendations for users without embeddings
 def predict(user_identifiers, user_embeddings,
             item_identifiers, item_embeddings,
-            train_user_interactions={},
+            train_users, test_users,
             embedding_dtype='float32', 
             n_recs=10,
             prediction_batch_size=32):
+    
+    # Assumptions check
+    try:
+        assert len(set(user_identifiers) & set(train_users+test_users)) == len(set(user_identifiers))
+    except:
+        raise AssertionError('All user identifiers must be in one or both of train/test users.')
+    train_users = {t:1 for t in train_users}
+    test_users = {t:1 for t in test_users}
     
     # Create tfrs.Streaming instance
     stream = tfrs.layers.factorized_top_k.Streaming()
@@ -33,35 +35,14 @@ def predict(user_identifiers, user_embeddings,
                    for i in batch_ranges)
     
     # Get predictions
-    formatted_predictions = {'train':{}, 'test':{}}
-    if len(train_user_interactions) > 0:
-        max_exclude_len = max([len(v) for v in train_user_interactions.values()])
-    else:
-        max_exclude_len = 0
+    predictions = {'train':{},'test':{}}
     for user_ids, user_embs in user_chunks:
-        scores, candidate_ids_list = stream(user_embs, k=n_recs+max_exclude_len)
-        candidate_ids_list = candidate_ids_list.numpy().astype(str)
+        _, candidate_ids_list = stream(user_embs, k=n_recs)
+        candidate_ids_list = candidate_ids_list.numpy().astype(str).tolist()
         for user_id, candidate_ids in zip(user_ids, candidate_ids_list):
-            candidate_ids = candidate_ids.tolist()
-            
-            train_interactions = train_user_interactions.get(user_id)
-            
-            # This is a user not in train. We need:
-            # * Test recommendations where we don't remove interactions
-            if train_interactions is None:
-                formatted_predictions['test'][user_id] = candidate_ids[:n_recs]
-            
-            # This is a user in train. We need:
-            # * Train recommendations where we don't remove interactions
-            # * Test recommendations where we do remove interactions
-            else:
-                formatted_predictions['train'][user_id] = candidate_ids[:n_recs]
-                train_candidates = []
-                for cid in candidate_ids:
-                    if cid not in train_interactions:
-                        train_candidates.append(cid)
-                    if len(train_candidates) == n_recs:
-                        break
-                formatted_predictions['test'][user_id] = train_candidates
-        
-    return formatted_predictions
+            if train_users.get(user_id) is not None:
+                predictions['train'][user_id] = candidate_ids
+            if test_users.get(user_id) is not None:
+                predictions['test'][user_id] = candidate_ids
+    
+    return predictions
