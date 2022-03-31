@@ -13,8 +13,7 @@ from pyrecs.preprocess import mixed_features2vec
 from pyrecs.postprocess.post_filter import post_filter
 
 
-# TODO: Clean up model inputs here and in tests
-# TODO: Abstract more of these methods and move to other submodules
+# TODO: Write docstrings everywhere
 class LightFM:
     def __init__(self, 
                  preprocess_kwargs={},
@@ -82,7 +81,6 @@ class LightFM:
     def _format_dfs(self, df):
         return dict(df.groupby(self.users_col)[self.items_col].apply(lambda x: list(x.unique())))
     
-    # TODO: Be able to use interaction ratings as weights (new interaction_type)
     def _create_train_interactions_matrix(self, train_df, test_df):
         self.train_user2ind = dict(zip(train_df[self.users_col].unique(),
                                        range(train_df[self.users_col].nunique())))
@@ -207,11 +205,11 @@ class LightFM:
                                                   test_users=list(self.test_dict.keys()),
                                                   prediction_batch_size=self.tfrs_prediction_batch_size)
 
-        post_filter(predictions=predictions_dict,
-                    n_recs=self.postprocess_n_recs,
-                    popular_items=self.most_popular_items if self.fill_most_popular_items else [],
-                    train_user2interactions=self.train_dict if self.remove_train_interactions_from_test else {},
-                    test_user2interactions=self.test_dict)
+        predictions_dict = post_filter(predictions=predictions_dict,
+                                       n_recs=self.postprocess_n_recs,
+                                       popular_items=self.most_popular_items if self.fill_most_popular_items else [],
+                                       train_user2interactions=self.train_dict if self.remove_train_interactions_from_test else {},
+                                       test_user2interactions=self.test_dict)
         
         if save_predictions:
             self.predictions_dict = predictions_dict
